@@ -10,7 +10,8 @@ from typing import cast
 
 from bass_transcriber import __version__
 from bass_transcriber.diagnostics import collect_diagnostics, has_errors
-from bass_transcriber.export.json import write_notes_json
+from bass_transcriber.export.json import read_notes_json, write_notes_json
+from bass_transcriber.export.midi import write_midi
 from bass_transcriber.models import BassInstrument
 from bass_transcriber.transcription.muscriptor import (
     MODEL_SIZES,
@@ -60,6 +61,15 @@ def build_parser() -> argparse.ArgumentParser:
         default="electric_bass",
     )
     transcribe_parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
+
+    export_parser = subparsers.add_parser("export", help="export a transcription artifact")
+    export_subparsers = export_parser.add_subparsers(dest="export_format", required=True)
+    midi_parser = export_subparsers.add_parser(
+        "midi",
+        help="convert a raw notes JSON sidecar to a Standard MIDI File",
+    )
+    midi_parser.add_argument("notes", type=Path)
+    midi_parser.add_argument("--output", "-o", type=Path)
     return parser
 
 
@@ -107,6 +117,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             model_size=cast(str, args.model),
         )
         print(f"Wrote {len(notes)} notes to {output}")
+        return 0
+
+    if args.command == "export" and args.export_format == "midi":
+        notes_path = cast(Path, args.notes)
+        if not notes_path.is_file():
+            parser.error(f"notes JSON does not exist: {notes_path}")
+        midi_output = cast(Path | None, args.output)
+        if midi_output is None:
+            base_name = notes_path.name.removesuffix(".notes.json")
+            midi_output = notes_path.with_name(f"{base_name}.mid")
+        try:
+            document = read_notes_json(notes_path)
+            write_midi(midi_output, document.notes)
+        except ValueError as error:
+            parser.error(str(error))
+        print(f"Wrote {len(document.notes)} notes to {midi_output}")
         return 0
 
     parser.print_help()

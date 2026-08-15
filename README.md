@@ -49,6 +49,15 @@ The default output is `path\to\audio.notes.json`. Use `--instrument acoustic_bas
 for an acoustic-bass source. At this stage JSON is intentionally a diagnostic
 artifact; rhythm inference, fingering, and GP5 export come later.
 
+Export the raw notes to MIDI for an auditory comparison with the source:
+
+```powershell
+uv run bass-transcriber export midi outputs\smoke.notes.json
+```
+
+This preserves note times but uses 120 BPM only as a MIDI timing carrier. It does
+not claim that 120 BPM is the detected musical tempo.
+
 ## CLI
 
 ```powershell

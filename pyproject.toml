@@ -9,6 +9,7 @@ description = "Transcribe songs into synchronized bass tablature for ToneLib Jam
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "mido>=1.3,<2",
     "muscriptor>=0.3,<0.4",
     "torch>=2.11,<2.12",
 ]
