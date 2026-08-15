@@ -8,7 +8,10 @@ version = "0.1.0"
 description = "Transcribe songs into synchronized bass tablature for ToneLib Jam"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
-dependencies = []
+dependencies = [
+    "muscriptor>=0.3,<0.4",
+    "torch>=2.11,<2.12",
+]
 
 [project.scripts]
 bass-transcriber = "bass_transcriber.cli:main"
@@ -39,3 +42,17 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 python_version = "3.12"
 strict = true
 
+[tool.uv]
+environments = [
+    "sys_platform == 'linux' or sys_platform == 'win32'",
+]
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true

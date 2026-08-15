@@ -17,9 +17,40 @@ uv run mypy src
 
 The repository pins its uv-managed Python version in `.python-version`.
 
+On Windows and Linux, uv resolves PyTorch from the official CUDA 12.8 wheel index.
+Model weights are not stored in this repository; MuScriptor downloads them into the
+standard Hugging Face cache on first use.
+
+## MuScriptor access
+
+MuScriptor checkpoints are gated on Hugging Face. Before fetching one:
+
+1. Accept the conditions on the desired `MuScriptor` model page on Hugging Face.
+2. Authenticate locally with `uvx hf auth login`.
+3. Check the local environment with `uv run bass-transcriber doctor`.
+
+We begin with the small checkpoint to validate the integration. The medium and large
+checkpoints can be evaluated after the smoke test succeeds.
+
+```powershell
+uv run bass-transcriber model fetch small
+```
+
+## First transcription
+
+Run the small checkpoint with hard electric-bass conditioning and write raw,
+unquantized notes to a JSON sidecar:
+
+```powershell
+uv run bass-transcriber transcribe path\to\audio.wav
+```
+
+The default output is `path\to\audio.notes.json`. Use `--instrument acoustic_bass`
+for an acoustic-bass source. At this stage JSON is intentionally a diagnostic
+artifact; rhythm inference, fingering, and GP5 export come later.
+
 ## CLI
 
 ```powershell
 uv run bass-transcriber --version
 ```
-

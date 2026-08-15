@@ -1,5 +1,6 @@
 from bass_transcriber import __version__
 from bass_transcriber.cli import main
+from bass_transcriber.diagnostics import Diagnostic
 
 
 def test_version_is_defined() -> None:
@@ -11,3 +12,24 @@ def test_cli_without_arguments_prints_help(capsys: object) -> None:
 
     captured = capsys.readouterr()  # type: ignore[attr-defined]
     assert "ToneLib Jam" in captured.out
+
+
+def test_doctor_prints_diagnostics(monkeypatch: object, capsys: object) -> None:
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        "bass_transcriber.cli.collect_diagnostics",
+        lambda: [Diagnostic("Example", "ok", "ready")],
+    )
+
+    assert main(["doctor"]) == 0
+
+    captured = capsys.readouterr()  # type: ignore[attr-defined]
+    assert "Example: ready" in captured.out
+
+
+def test_doctor_fails_on_required_error(monkeypatch: object) -> None:
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        "bass_transcriber.cli.collect_diagnostics",
+        lambda: [Diagnostic("CUDA", "error", "unavailable")],
+    )
+
+    assert main(["doctor"]) == 1
