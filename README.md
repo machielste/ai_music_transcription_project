@@ -4,6 +4,10 @@ A local Python project for converting songs into synchronized bass tablature tha
 
 The refined design and V1 scope are documented in [v1plan.md](v1plan.md).
 
+## Disclosure
+
+THIS REPO INCLUDES AI ASSISTED CODE
+
 ## Development setup
 
 Install [uv](https://docs.astral.sh/uv/), then run:
