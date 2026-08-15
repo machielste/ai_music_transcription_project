@@ -10,9 +10,12 @@ from typing import cast
 
 from bass_transcriber import __version__
 from bass_transcriber.diagnostics import collect_diagnostics, has_errors
+from bass_transcriber.export.gp5 import write_gp5
 from bass_transcriber.export.json import read_notes_json, write_notes_json
 from bass_transcriber.export.midi import write_midi
+from bass_transcriber.export.rhythm_json import read_rhythm_json, write_rhythm_json
 from bass_transcriber.models import BassInstrument
+from bass_transcriber.rhythm import detect_rhythm
 from bass_transcriber.transcription.muscriptor import (
     MODEL_SIZES,
     ModelFetchError,
@@ -71,6 +74,30 @@ def build_parser() -> argparse.ArgumentParser:
     )
     midi_parser.add_argument("notes", type=Path)
     midi_parser.add_argument("--output", "-o", type=Path)
+
+    gp5_parser = export_subparsers.add_parser(
+        "gp5",
+        help="write a five-string BEADG Guitar Pro 5 score",
+    )
+    gp5_parser.add_argument("notes", type=Path)
+    gp5_parser.add_argument("--rhythm", type=Path, required=True)
+    gp5_parser.add_argument("--output", "-o", type=Path)
+    gp5_parser.add_argument("--title")
+
+    rhythm_parser = subparsers.add_parser("rhythm", help="analyze musical timing")
+    rhythm_subparsers = rhythm_parser.add_subparsers(dest="rhythm_command", required=True)
+    detect_parser = rhythm_subparsers.add_parser(
+        "detect",
+        help="detect tempo, meter, downbeats, and transcription onset lag",
+    )
+    detect_parser.add_argument("notes", type=Path)
+    detect_parser.add_argument("--output", "-o", type=Path)
+    detect_parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
+    detect_parser.add_argument(
+        "--detector",
+        choices=("auto", "beat_this", "librosa"),
+        default="auto",
+    )
     return parser
 
 
@@ -137,6 +164,65 @@ def main(argv: Sequence[str] | None = None) -> int:
         except ValueError as error:
             parser.error(str(error))
         print(f"Wrote {len(document.notes)} notes to {midi_output}")
+        return 0
+
+    if args.command == "export" and args.export_format == "gp5":
+        notes_path = cast(Path, args.notes)
+        rhythm_path = cast(Path, args.rhythm)
+        if not notes_path.is_file():
+            parser.error(f"notes JSON does not exist: {notes_path}")
+        if not rhythm_path.is_file():
+            parser.error(f"rhythm JSON does not exist: {rhythm_path}")
+        gp5_output = cast(Path | None, args.output)
+        if gp5_output is None:
+            base_name = notes_path.name.removesuffix(".notes.json")
+            gp5_output = notes_path.with_name(f"{base_name}.gp5")
+        notes_document = read_notes_json(notes_path)
+        rhythm_grid = read_rhythm_json(rhythm_path)
+        title = cast(str | None, args.title) or f"{notes_document.source.stem} - Bass"
+        try:
+            write_gp5(
+                gp5_output,
+                notes_document.notes,
+                rhythm_grid,
+                title=title,
+            )
+        except ValueError as error:
+            parser.error(str(error))
+        print(f"Wrote five-string BEADG GP5 at {round(rhythm_grid.bpm)} BPM to {gp5_output}")
+        return 0
+
+    if args.command == "rhythm" and args.rhythm_command == "detect":
+        notes_path = cast(Path, args.notes)
+        if not notes_path.is_file():
+            parser.error(f"notes JSON does not exist: {notes_path}")
+        document = read_notes_json(notes_path)
+        if not document.source.is_file():
+            parser.error(f"source audio does not exist: {document.source}")
+        rhythm_output = cast(Path | None, args.output)
+        if rhythm_output is None:
+            base_name = notes_path.name.removesuffix(".notes.json")
+            rhythm_output = notes_path.with_name(f"{base_name}.rhythm.json")
+        print(f"Detecting rhythm from {document.source} ...", file=sys.stderr)
+        grid = detect_rhythm(
+            document.source,
+            note_onsets=[note.start_seconds for note in document.notes],
+            device=cast(str, args.device),
+            detector=cast(str, args.detector),  # type: ignore[arg-type]
+        )
+        write_rhythm_json(rhythm_output, grid, source=document.source)
+        meter = f"{grid.beats_per_bar}/4" if grid.beats_per_bar else "unknown"
+        first_downbeat = (
+            f"{grid.first_downbeat_seconds:.3f}s"
+            if grid.first_downbeat_seconds is not None
+            else "unknown"
+        )
+        print(
+            f"Detected {grid.bpm:.3f} BPM with {grid.detector}, meter {meter}, "
+            f"first downbeat {first_downbeat}, "
+            f"onset delay {grid.onset_delay_seconds * 1000:+.1f}ms"
+        )
+        print(f"Wrote {len(grid.beat_times_seconds)} beats to {rhythm_output}")
         return 0
 
     parser.print_help()

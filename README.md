@@ -65,6 +65,27 @@ uv run bass-transcriber export midi outputs\smoke.notes.json
 This preserves note times but uses 120 BPM only as a MIDI timing carrier. It does
 not claim that 120 BPM is the detected musical tempo.
 
+Detect the song's beat grid without changing the raw note timing:
+
+```powershell
+uv run bass-transcriber rhythm detect outputs\song.large.auto.notes.json
+```
+
+The command prefers Beat This when its official checkpoint is cached and otherwise
+uses librosa's beat tracker. The fallback reports meter as unknown instead of
+guessing downbeats.
+
+Write a first-pass five-string BEADG Guitar Pro 5 score:
+
+```powershell
+uv run bass-transcriber export gp5 outputs\song.large.auto.notes.json `
+  --rhythm outputs\song.large.auto.rhythm.json
+```
+
+Until a downbeat detector is available, GP5 export assumes 4/4 and treats the
+detected beat phase as an arbitrary bar phase. Note timing and pitch remain usable;
+barlines can be shifted later.
+
 ## CLI
 
 ```powershell
