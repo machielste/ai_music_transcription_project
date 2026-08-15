@@ -1,4 +1,4 @@
-"""Minimal five-string Guitar Pro 5 export."""
+"""Minimal four- and five-string bass Guitar Pro 5 export."""
 
 from __future__ import annotations
 
@@ -25,6 +25,7 @@ from guitarpro.models import (  # type: ignore[import-untyped]
 from bass_transcriber.models import BassNote, RhythmGrid
 from bass_transcriber.tab import (
     BEADG_STRINGS,
+    EADG_STRINGS,
     FingeringEvent,
     generate_candidates,
     optimize_fingering,
@@ -68,12 +69,17 @@ def write_gp5(
     *,
     title: str,
     fingering_profile: str | None = "balanced",
+    five_string: bool = True,
 ) -> GP5ExportResult:
-    """Write a first-pass, 4/4, five-string BEADG GP5 score."""
-    tab_notes, dropped_pitches = _quantize_and_finger(notes, grid, fingering_profile)
+    """Write a first-pass 4/4 GP5 score for a four- or five-string bass."""
+    strings = BEADG_STRINGS if five_string else EADG_STRINGS
+    tuning_name = "BEADG" if five_string else "EADG"
+    tab_notes, dropped_pitches = _quantize_and_finger(notes, grid, fingering_profile, strings)
     if not tab_notes:
         if dropped_pitches:
-            raise ValueError("cannot export: every transcribed note is outside BEADG range")
+            raise ValueError(
+                f"cannot export: every transcribed note is outside {tuning_name} range"
+            )
         raise ValueError("cannot export an empty transcription")
 
     measure_count = math.ceil(tab_notes[-1].end_slot / SLOTS_PER_BAR)
@@ -82,6 +88,7 @@ def write_gp5(
         title=title,
         initial_bpm=tempo_schedule[0],
         measure_count=measure_count,
+        strings=strings,
     )
     track = song.tracks[0]
 
@@ -108,7 +115,7 @@ def write_gp5(
 
     output.parent.mkdir(parents=True, exist_ok=True)
     guitarpro.write(song, str(output), version=(5, 1, 0))
-    _validate_round_trip(output)
+    _validate_round_trip(output, strings)
     return GP5ExportResult(len(tab_notes), tuple(dropped_pitches))
 
 
@@ -116,6 +123,7 @@ def _quantize_and_finger(
     notes: list[BassNote],
     grid: RhythmGrid,
     fingering_profile: str | None,
+    strings: tuple[tuple[int, int], ...],
 ) -> tuple[list[_TabNote], list[int]]:
     period_seconds = 60.0 / grid.bpm
     first_beat = grid.beat_times_seconds[0]
@@ -124,7 +132,7 @@ def _quantize_and_finger(
     dropped_pitches: list[int] = []
 
     for raw_note in sorted(notes, key=lambda item: item.start_seconds):
-        if not generate_candidates(raw_note.pitch):
+        if not generate_candidates(raw_note.pitch, strings=strings):
             dropped_pitches.append(raw_note.pitch)
             continue
         corrected_start = raw_note.start_seconds - grid.onset_delay_seconds
@@ -142,9 +150,9 @@ def _quantize_and_finger(
         events.append(FingeringEvent(raw_note.pitch, start_slot, end_slot))
 
     if fingering_profile is None:
-        fingerings = [_choose_fingering(event.pitch) for event in events]
+        fingerings = [_choose_fingering(event.pitch, strings) for event in events]
     else:
-        optimized = optimize_fingering(events, fingering_profile)
+        optimized = optimize_fingering(events, fingering_profile, strings=strings)
         fingerings = [(choice.string, choice.fret) for choice in optimized]
     result = [
         _TabNote(event.pitch, event.start_slot, event.end_slot, string, fret)
@@ -171,21 +179,34 @@ def _quantize_and_finger(
     return cleaned, dropped_pitches
 
 
-def _choose_fingering(pitch: int) -> tuple[int, int]:
-    candidates = [(candidate.fret, candidate.string) for candidate in generate_candidates(pitch)]
+def _choose_fingering(
+    pitch: int, strings: tuple[tuple[int, int], ...] = BEADG_STRINGS
+) -> tuple[int, int]:
+    candidates = [
+        (candidate.fret, candidate.string)
+        for candidate in generate_candidates(pitch, strings=strings)
+    ]
     if not candidates:
-        raise ValueError(f"MIDI pitch {pitch} is outside five-string BEADG range")
+        tuning_name = "BEADG" if len(strings) == 5 else "EADG"
+        raise ValueError(f"MIDI pitch {pitch} is outside {tuning_name} range")
     fret, string = min(candidates)
     return string, fret
 
 
-def _new_song(*, title: str, initial_bpm: int, measure_count: int) -> Song:
+def _new_song(
+    *,
+    title: str,
+    initial_bpm: int,
+    measure_count: int,
+    strings: tuple[tuple[int, int], ...],
+) -> Song:
     song = Song(title=title, tempo=initial_bpm, tempoName="Detected tempo")
     track = song.tracks[0]
-    track.name = "Bass (5-string BEADG)"
+    tuning_name = "BEADG" if len(strings) == 5 else "EADG"
+    track.name = f"Bass ({len(strings)}-string {tuning_name})"
     track.fretCount = 24
     track.indicateTuning = True
-    track.strings = [GuitarString(number, pitch) for number, pitch in BEADG_STRINGS]
+    track.strings = [GuitarString(number, pitch) for number, pitch in strings]
     track.channel.instrument = 33  # General MIDI electric bass (finger), zero-based.
 
     first_header = song.measureHeaders[0]
@@ -281,9 +302,9 @@ def _largest_aligned_duration(local_slot: int, remaining: int) -> int:
     return 1
 
 
-def _validate_round_trip(output: Path) -> None:
+def _validate_round_trip(output: Path, expected_strings: tuple[tuple[int, int], ...]) -> None:
     parsed = guitarpro.parse(str(output))
-    expected_tuning = [pitch for _, pitch in BEADG_STRINGS]
+    expected_tuning = [pitch for _, pitch in expected_strings]
     actual_tuning = [string.value for string in parsed.tracks[0].strings]
     if actual_tuning != expected_tuning:
         raise RuntimeError(f"GP5 tuning round-trip failed: {actual_tuning}")

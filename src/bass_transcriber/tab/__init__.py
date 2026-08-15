@@ -2,6 +2,7 @@
 
 from bass_transcriber.tab.fingering import (
     BEADG_STRINGS,
+    EADG_STRINGS,
     FINGERING_PROFILES,
     FingeringCandidate,
     FingeringEvent,
@@ -12,6 +13,7 @@ from bass_transcriber.tab.fingering import (
 
 __all__ = [
     "BEADG_STRINGS",
+    "EADG_STRINGS",
     "FINGERING_PROFILES",
     "FingeringCandidate",
     "FingeringEvent",

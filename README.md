@@ -117,3 +117,8 @@ file to the output folder** when you want the source audio placed beside the GP5
 The **Fingering style** selector applies an optional phrase-level optimizer after
 rhythm quantization. Choose **Legacy lowest fret** to bypass that stage and retain
 the original per-note behavior.
+
+The **Use 5-string bass** toggle is off by default. It selects BEADG when enabled
+and four-string EADG when disabled. In four-string mode, the optimizer cannot
+choose the B string; notes below E1 are dropped and listed in the completion
+warnings.

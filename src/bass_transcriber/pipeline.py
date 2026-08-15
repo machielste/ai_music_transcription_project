@@ -40,6 +40,7 @@ def process_song(
     *,
     copy_source: bool = False,
     fingering_profile: str | None = "balanced",
+    five_string: bool = True,
     progress: ProgressCallback | None = None,
 ) -> ProcessingResult:
     """Run the current production pipeline and copy out one final GP5 file."""
@@ -101,6 +102,7 @@ def process_song(
             rhythm,
             title=f"{source.stem} - Bass",
             fingering_profile=fingering_profile,
+            five_string=five_string,
         )
         shutil.copy2(temporary_gp5, final_output)
 
@@ -115,9 +117,12 @@ def process_song(
             for pitch, count in pitch_counts.items()
         )
         count = len(export_result.dropped_pitches)
+        tuning_name = "BEADG" if five_string else "EADG"
+        string_count = 5 if five_string else 4
         warnings.append(
-            f"Dropped {count} note{'s' if count != 1 else ''} outside the five-string "
-            f"BEADG range. MIDI pitch{'es' if len(pitch_counts) != 1 else ''}: "
+            f"Dropped {count} note{'s' if count != 1 else ''} outside the "
+            f"{string_count}-string {tuning_name} range. "
+            f"MIDI pitch{'es' if len(pitch_counts) != 1 else ''}: "
             f"{pitch_summary}."
         )
 

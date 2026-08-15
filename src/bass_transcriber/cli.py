@@ -78,12 +78,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     gp5_parser = export_subparsers.add_parser(
         "gp5",
-        help="write a five-string BEADG Guitar Pro 5 score",
+        help="write a four- or five-string bass Guitar Pro 5 score",
     )
     gp5_parser.add_argument("notes", type=Path)
     gp5_parser.add_argument("--rhythm", type=Path, required=True)
     gp5_parser.add_argument("--output", "-o", type=Path)
     gp5_parser.add_argument("--title")
+    gp5_parser.add_argument(
+        "--strings",
+        type=int,
+        choices=(4, 5),
+        default=5,
+        help="bass string count and tuning: 4=EADG, 5=BEADG",
+    )
     gp5_parser.add_argument(
         "--fingering-profile",
         choices=(*FINGERING_PROFILES, "legacy"),
@@ -196,11 +203,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 fingering_profile=(
                     None if args.fingering_profile == "legacy" else args.fingering_profile
                 ),
+                five_string=args.strings == 5,
             )
         except ValueError as error:
             parser.error(str(error))
         print(
-            f"Wrote five-string BEADG GP5 using an integer tempo schedule "
+            f"Wrote {args.strings}-string {'BEADG' if args.strings == 5 else 'EADG'} "
+            f"GP5 using an integer tempo schedule "
             f"for {rhythm_grid.bpm:.3f} BPM to {gp5_output}"
         )
         if export_result.dropped_pitches:

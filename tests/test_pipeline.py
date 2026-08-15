@@ -137,5 +137,5 @@ def test_process_song_surfaces_dropped_note_warning(
     result = pipeline.process_song(source, destination)
 
     assert result.warnings == (
-        "Dropped 3 notes outside the five-string BEADG range. MIDI pitches: 71 (2x), 72.",
+        "Dropped 3 notes outside the 5-string BEADG range. MIDI pitches: 71 (2x), 72.",
     )

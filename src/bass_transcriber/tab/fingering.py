@@ -13,6 +13,7 @@ BEADG_STRINGS: tuple[tuple[int, int], ...] = (
     (4, 28),  # E1
     (5, 23),  # B0
 )
+EADG_STRINGS: tuple[tuple[int, int], ...] = BEADG_STRINGS[:-1]
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,6 +160,8 @@ def generate_candidates(
 def optimize_fingering(
     events: Sequence[FingeringEvent],
     profile_name: str,
+    *,
+    strings: Sequence[tuple[int, int]] = BEADG_STRINGS,
 ) -> list[FingeringCandidate]:
     """Choose a globally low-cost fingering path using dynamic programming."""
     if not events:
@@ -171,7 +174,7 @@ def optimize_fingering(
             f"unknown fingering profile {profile_name!r}; choose from {available}"
         ) from error
 
-    candidates = [generate_candidates(event.pitch) for event in events]
+    candidates = [generate_candidates(event.pitch, strings=strings) for event in events]
     for event, options in zip(events, candidates, strict=True):
         if not options:
             raise ValueError(f"MIDI pitch {event.pitch} is outside five-string BEADG range")

@@ -45,7 +45,10 @@ def test_gp5_fingering_profile_can_be_selected() -> None:
             "rhythm.json",
             "--fingering-profile",
             "slap_funk",
+            "--strings",
+            "4",
         ]
     )
 
     assert args.fingering_profile == "slap_funk"
+    assert args.strings == 4

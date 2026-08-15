@@ -71,3 +71,28 @@ def test_gp5_drops_out_of_range_notes_and_reports_them(tmp_path: Path) -> None:
     assert output.is_file()
     assert result.exported_note_count == 1
     assert result.dropped_pitches == (71,)
+
+
+def test_gp5_four_string_mode_excludes_b_string_and_drops_notes_below_e(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "four-string.gp5"
+    grid = RhythmGrid(
+        detector="test",
+        bpm=120.0,
+        beats_per_bar=4,
+        first_downbeat_seconds=0.0,
+        beat_times_seconds=(0.0, 0.5),
+        onset_delay_seconds=0.0,
+    )
+    notes = [
+        BassNote(23, 0.0, 0.25, "electric_bass"),
+        BassNote(28, 0.25, 0.5, "electric_bass"),
+    ]
+
+    result = write_gp5(output, notes, grid, title="Test", five_string=False)
+    song = guitarpro.parse(str(output))
+
+    assert [string.value for string in song.tracks[0].strings] == [43, 38, 33, 28]
+    assert result.exported_note_count == 1
+    assert result.dropped_pitches == (23,)
