@@ -23,19 +23,16 @@ from guitarpro.models import (  # type: ignore[import-untyped]
 )
 
 from bass_transcriber.models import BassNote, RhythmGrid
+from bass_transcriber.tab import (
+    BEADG_STRINGS,
+    FingeringEvent,
+    generate_candidates,
+    optimize_fingering,
+)
 
 SUBDIVISIONS_PER_BEAT = 8
 SLOTS_PER_BAR = 4 * SUBDIVISIONS_PER_BEAT
 TICKS_PER_SLOT = Duration.quarterTime // SUBDIVISIONS_PER_BEAT
-
-# Guitar Pro numbers strings from highest to lowest.
-BEADG_STRINGS: tuple[tuple[int, int], ...] = (
-    (1, 43),  # G2
-    (2, 38),  # D2
-    (3, 33),  # A1
-    (4, 28),  # E1
-    (5, 23),  # B0
-)
 
 _DURATION_VALUE_BY_SLOTS = {
     32: Duration.whole,
@@ -70,9 +67,10 @@ def write_gp5(
     grid: RhythmGrid,
     *,
     title: str,
+    fingering_profile: str | None = "balanced",
 ) -> GP5ExportResult:
     """Write a first-pass, 4/4, five-string BEADG GP5 score."""
-    tab_notes, dropped_pitches = _quantize_and_finger(notes, grid)
+    tab_notes, dropped_pitches = _quantize_and_finger(notes, grid, fingering_profile)
     if not tab_notes:
         if dropped_pitches:
             raise ValueError("cannot export: every transcribed note is outside BEADG range")
@@ -115,18 +113,18 @@ def write_gp5(
 
 
 def _quantize_and_finger(
-    notes: list[BassNote], grid: RhythmGrid
+    notes: list[BassNote],
+    grid: RhythmGrid,
+    fingering_profile: str | None,
 ) -> tuple[list[_TabNote], list[int]]:
     period_seconds = 60.0 / grid.bpm
     first_beat = grid.beat_times_seconds[0]
     offset_slots = round(first_beat / period_seconds * SUBDIVISIONS_PER_BEAT)
-    result: list[_TabNote] = []
+    events: list[FingeringEvent] = []
     dropped_pitches: list[int] = []
 
     for raw_note in sorted(notes, key=lambda item: item.start_seconds):
-        try:
-            string, fret = _choose_fingering(raw_note.pitch)
-        except ValueError:
+        if not generate_candidates(raw_note.pitch):
             dropped_pitches.append(raw_note.pitch)
             continue
         corrected_start = raw_note.start_seconds - grid.onset_delay_seconds
@@ -141,7 +139,17 @@ def _quantize_and_finger(
             round((corrected_end - first_beat) / period_seconds * SUBDIVISIONS_PER_BEAT)
             + offset_slots,
         )
-        result.append(_TabNote(raw_note.pitch, start_slot, end_slot, string, fret))
+        events.append(FingeringEvent(raw_note.pitch, start_slot, end_slot))
+
+    if fingering_profile is None:
+        fingerings = [_choose_fingering(event.pitch) for event in events]
+    else:
+        optimized = optimize_fingering(events, fingering_profile)
+        fingerings = [(choice.string, choice.fret) for choice in optimized]
+    result = [
+        _TabNote(event.pitch, event.start_slot, event.end_slot, string, fret)
+        for event, (string, fret) in zip(events, fingerings, strict=True)
+    ]
 
     # The source is monophonic. Prevent independently rounded offsets from
     # extending through the next attack while preserving explicit rests.
@@ -164,11 +172,7 @@ def _quantize_and_finger(
 
 
 def _choose_fingering(pitch: int) -> tuple[int, int]:
-    candidates = [
-        (fret, string)
-        for string, open_pitch in BEADG_STRINGS
-        if 0 <= (fret := pitch - open_pitch) <= 24
-    ]
+    candidates = [(candidate.fret, candidate.string) for candidate in generate_candidates(pitch)]
     if not candidates:
         raise ValueError(f"MIDI pitch {pitch} is outside five-string BEADG range")
     fret, string = min(candidates)

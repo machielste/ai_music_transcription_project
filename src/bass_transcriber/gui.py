@@ -15,6 +15,15 @@ _AUDIO_TYPES = [
     ("All files", "*.*"),
 ]
 
+_FINGERING_OPTIONS = {
+    "Balanced (recommended)": "balanced",
+    "Slap / funk": "slap_funk",
+    "Avoid open strings": "avoid_open",
+    "Prefer low positions": "low_positions",
+    "Compact hand position": "compact",
+    "Legacy lowest fret (optimizer off)": None,
+}
+
 
 class TranscriberApp:
     """Small Tk application that runs the pipeline outside the UI thread."""
@@ -22,11 +31,12 @@ class TranscriberApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("Bass Transcriber")
-        self.root.minsize(680, 260)
+        self.root.minsize(680, 320)
 
         self.source = tk.StringVar()
         self.destination = tk.StringVar(value=str((Path.cwd() / "outputs").resolve()))
         self.copy_source = tk.BooleanVar(value=False)
+        self.fingering_style = tk.StringVar(value="Balanced (recommended)")
         self.status = tk.StringVar(value="Select a music file and output folder.")
         self.progress = tk.DoubleVar(value=0.0)
         self.events: queue.Queue[tuple[str, object]] = queue.Queue()
@@ -66,15 +76,23 @@ class TranscriberApp:
             variable=self.copy_source,
         ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(4, 8))
 
+        ttk.Label(frame, text="Fingering style").grid(row=4, column=0, sticky="w", pady=6)
+        ttk.Combobox(
+            frame,
+            textvariable=self.fingering_style,
+            values=tuple(_FINGERING_OPTIONS),
+            state="readonly",
+        ).grid(row=4, column=1, columnspan=2, sticky="ew", padx=(10, 0), pady=6)
+
         ttk.Progressbar(
             frame,
             variable=self.progress,
             maximum=100.0,
             mode="determinate",
-        ).grid(row=4, column=0, columnspan=3, sticky="ew", pady=8)
+        ).grid(row=5, column=0, columnspan=3, sticky="ew", pady=8)
 
         ttk.Label(frame, textvariable=self.status, wraplength=620).grid(
-            row=5, column=0, columnspan=3, sticky="w", pady=6
+            row=6, column=0, columnspan=3, sticky="w", pady=6
         )
 
         self.process_button = ttk.Button(
@@ -82,7 +100,7 @@ class TranscriberApp:
             text="Process to GP5",
             command=self._start_processing,
         )
-        self.process_button.grid(row=6, column=0, columnspan=3, pady=(14, 0))
+        self.process_button.grid(row=7, column=0, columnspan=3, pady=(14, 0))
 
     def _choose_source(self) -> None:
         selected = filedialog.askopenfilename(title="Select music file", filetypes=_AUDIO_TYPES)
@@ -129,12 +147,23 @@ class TranscriberApp:
         self.status.set("Starting…")
         worker = threading.Thread(
             target=self._run_pipeline,
-            args=(source, destination, self.copy_source.get()),
+            args=(
+                source,
+                destination,
+                self.copy_source.get(),
+                _FINGERING_OPTIONS[self.fingering_style.get()],
+            ),
             daemon=True,
         )
         worker.start()
 
-    def _run_pipeline(self, source: Path, destination: Path, copy_source: bool) -> None:
+    def _run_pipeline(
+        self,
+        source: Path,
+        destination: Path,
+        copy_source: bool,
+        fingering_profile: str | None,
+    ) -> None:
         def report(fraction: float, message: str) -> None:
             self.events.put(("progress", (fraction, message)))
 
@@ -143,6 +172,7 @@ class TranscriberApp:
                 source,
                 destination,
                 copy_source=copy_source,
+                fingering_profile=fingering_profile,
                 progress=report,
             )
         except Exception as error:  # The UI must report backend failures cleanly.

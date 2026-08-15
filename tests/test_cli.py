@@ -1,5 +1,5 @@
 from bass_transcriber import __version__
-from bass_transcriber.cli import main
+from bass_transcriber.cli import build_parser, main
 from bass_transcriber.diagnostics import Diagnostic
 
 
@@ -33,3 +33,19 @@ def test_doctor_fails_on_required_error(monkeypatch: object) -> None:
     )
 
     assert main(["doctor"]) == 1
+
+
+def test_gp5_fingering_profile_can_be_selected() -> None:
+    args = build_parser().parse_args(
+        [
+            "export",
+            "gp5",
+            "notes.json",
+            "--rhythm",
+            "rhythm.json",
+            "--fingering-profile",
+            "slap_funk",
+        ]
+    )
+
+    assert args.fingering_profile == "slap_funk"

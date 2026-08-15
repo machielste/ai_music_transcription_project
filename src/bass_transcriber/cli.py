@@ -16,6 +16,7 @@ from bass_transcriber.export.midi import write_midi
 from bass_transcriber.export.rhythm_json import read_rhythm_json, write_rhythm_json
 from bass_transcriber.models import BassInstrument
 from bass_transcriber.rhythm import detect_rhythm
+from bass_transcriber.tab import FINGERING_PROFILES
 from bass_transcriber.transcription.muscriptor import (
     MODEL_SIZES,
     ModelFetchError,
@@ -83,6 +84,12 @@ def build_parser() -> argparse.ArgumentParser:
     gp5_parser.add_argument("--rhythm", type=Path, required=True)
     gp5_parser.add_argument("--output", "-o", type=Path)
     gp5_parser.add_argument("--title")
+    gp5_parser.add_argument(
+        "--fingering-profile",
+        choices=(*FINGERING_PROFILES, "legacy"),
+        default="balanced",
+        help="phrase-level fingering style, or 'legacy' to disable optimization",
+    )
 
     rhythm_parser = subparsers.add_parser("rhythm", help="analyze musical timing")
     rhythm_subparsers = rhythm_parser.add_subparsers(dest="rhythm_command", required=True)
@@ -181,11 +188,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         rhythm_grid = read_rhythm_json(rhythm_path)
         title = cast(str | None, args.title) or f"{notes_document.source.stem} - Bass"
         try:
-            write_gp5(
+            export_result = write_gp5(
                 gp5_output,
                 notes_document.notes,
                 rhythm_grid,
                 title=title,
+                fingering_profile=(
+                    None if args.fingering_profile == "legacy" else args.fingering_profile
+                ),
             )
         except ValueError as error:
             parser.error(str(error))
@@ -193,6 +203,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"Wrote five-string BEADG GP5 using an integer tempo schedule "
             f"for {rhythm_grid.bpm:.3f} BPM to {gp5_output}"
         )
+        if export_result.dropped_pitches:
+            print(
+                f"Warning: dropped {len(export_result.dropped_pitches)} notes outside "
+                "the BEADG range",
+                file=sys.stderr,
+            )
         return 0
 
     if args.command == "rhythm" and args.rhythm_command == "detect":

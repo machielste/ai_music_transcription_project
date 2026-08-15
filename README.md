@@ -113,3 +113,7 @@ runs the large-model automatic-instrument pipeline in the background and writes
 `<song>.bass.gp5` into the selected folder. Temporary WAV and JSON artifacts are
 removed after a successful or failed run. Enable **Also copy the original music
 file to the output folder** when you want the source audio placed beside the GP5.
+
+The **Fingering style** selector applies an optional phrase-level optimizer after
+rhythm quantization. Choose **Legacy lowest fret** to bypass that stage and retain
+the original per-note behavior.

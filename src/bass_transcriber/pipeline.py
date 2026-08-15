@@ -39,6 +39,7 @@ def process_song(
     destination: Path,
     *,
     copy_source: bool = False,
+    fingering_profile: str | None = "balanced",
     progress: ProgressCallback | None = None,
 ) -> ProcessingResult:
     """Run the current production pipeline and copy out one final GP5 file."""
@@ -94,7 +95,13 @@ def process_song(
 
         _notify(progress, 0.93, "Writing synchronized five-string GP5")
         temporary_gp5 = work / "result.gp5"
-        export_result = write_gp5(temporary_gp5, notes, rhythm, title=f"{source.stem} - Bass")
+        export_result = write_gp5(
+            temporary_gp5,
+            notes,
+            rhythm,
+            title=f"{source.stem} - Bass",
+            fingering_profile=fingering_profile,
+        )
         shutil.copy2(temporary_gp5, final_output)
 
     warnings: list[str] = []

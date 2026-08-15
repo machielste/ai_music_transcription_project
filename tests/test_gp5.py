@@ -21,7 +21,7 @@ def test_gp5_round_trips_five_string_tuning_and_notes(tmp_path: Path) -> None:
         BassNote(28, 0.25, 0.75, "electric_bass"),
     ]
 
-    write_gp5(output, notes, grid, title="Test")
+    write_gp5(output, notes, grid, title="Test", fingering_profile=None)
 
     song = guitarpro.parse(str(output))
     track = song.tracks[0]
