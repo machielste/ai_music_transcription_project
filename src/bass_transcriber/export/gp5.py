@@ -14,6 +14,8 @@ from guitarpro.models import (  # type: ignore[import-untyped]
     GuitarString,
     Measure,
     MeasureHeader,
+    MixTableChange,
+    MixTableItem,
     Note,
     NoteType,
     Song,
@@ -67,7 +69,12 @@ def write_gp5(
         raise ValueError("cannot export an empty transcription")
 
     measure_count = math.ceil(tab_notes[-1].end_slot / SLOTS_PER_BAR)
-    song = _new_song(title=title, bpm=round(grid.bpm), measure_count=measure_count)
+    tempo_schedule = _tempo_schedule(grid.bpm, measure_count)
+    song = _new_song(
+        title=title,
+        initial_bpm=tempo_schedule[0],
+        measure_count=measure_count,
+    )
     track = song.tracks[0]
 
     for measure_index, measure in enumerate(track.measures):
@@ -88,6 +95,8 @@ def write_gp5(
             cursor = note_end
         if cursor < measure_end:
             _append_span(measure, cursor, measure_end, None)
+
+    _attach_tempo_schedule(track.measures, tempo_schedule)
 
     output.parent.mkdir(parents=True, exist_ok=True)
     guitarpro.write(song, str(output), version=(5, 1, 0))
@@ -148,8 +157,8 @@ def _choose_fingering(pitch: int) -> tuple[int, int]:
     return string, fret
 
 
-def _new_song(*, title: str, bpm: int, measure_count: int) -> Song:
-    song = Song(title=title, tempo=bpm, tempoName="Detected tempo")
+def _new_song(*, title: str, initial_bpm: int, measure_count: int) -> Song:
+    song = Song(title=title, tempo=initial_bpm, tempoName="Detected tempo")
     track = song.tracks[0]
     track.name = "Bass (5-string BEADG)"
     track.fretCount = 24
@@ -169,6 +178,42 @@ def _new_song(*, title: str, bpm: int, measure_count: int) -> Song:
         song.addMeasureHeader(header)
         track.measures.append(Measure(track, header))
     return song
+
+
+def _tempo_schedule(target_bpm: float, measure_count: int) -> list[int]:
+    """Approximate fractional BPM with integer tempos using error diffusion."""
+    if measure_count < 1:
+        raise ValueError("tempo schedule requires at least one measure")
+    lower = math.floor(target_bpm)
+    upper = math.ceil(target_bpm)
+    if lower == upper:
+        return [lower] * measure_count
+
+    target_bar_seconds = 240.0 / target_bpm
+    elapsed = 0.0
+    schedule: list[int] = []
+    for measure_index in range(measure_count):
+        desired_end = (measure_index + 1) * target_bar_seconds
+        tempo = min(
+            (lower, upper),
+            key=lambda candidate: abs(elapsed + 240.0 / candidate - desired_end),
+        )
+        schedule.append(tempo)
+        elapsed += 240.0 / tempo
+    return schedule
+
+
+def _attach_tempo_schedule(measures: list[Measure], schedule: list[int]) -> None:
+    previous = schedule[0]
+    for measure, tempo in zip(measures[1:], schedule[1:], strict=True):
+        if tempo != previous:
+            first_beat = measure.voices[0].beats[0]
+            first_beat.effect.mixTableChange = MixTableChange(
+                tempo=MixTableItem(value=tempo, duration=0, allTracks=True),
+                tempoName="",
+                hideTempo=True,
+            )
+        previous = tempo
 
 
 def _append_span(

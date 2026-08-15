@@ -2,7 +2,7 @@ from pathlib import Path
 
 import guitarpro
 
-from bass_transcriber.export.gp5 import write_gp5
+from bass_transcriber.export.gp5 import _tempo_schedule, write_gp5
 from bass_transcriber.models import BassNote, RhythmGrid
 
 
@@ -34,3 +34,18 @@ def test_gp5_round_trips_five_string_tuning_and_notes(tmp_path: Path) -> None:
         if note.type.name == "normal"
     ]
     assert [(note.string, note.value) for note in sounding] == [(5, 2), (4, 0)]
+
+
+def test_fractional_tempo_schedule_has_bounded_cumulative_error() -> None:
+    target_bpm = 117.454
+    schedule = _tempo_schedule(target_bpm, 132)
+
+    assert set(schedule) == {117, 118}
+    target_bar_seconds = 240.0 / target_bpm
+    elapsed = 0.0
+    errors: list[float] = []
+    for measure_index, tempo in enumerate(schedule):
+        elapsed += 240.0 / tempo
+        errors.append(elapsed - (measure_index + 1) * target_bar_seconds)
+
+    assert max(abs(error) for error in errors) < 0.01

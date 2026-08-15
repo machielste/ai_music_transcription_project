@@ -86,8 +86,25 @@ Until a downbeat detector is available, GP5 export assumes 4/4 and treats the
 detected beat phase as an arbitrary bar phase. Note timing and pitch remain usable;
 barlines can be shifted later.
 
+GP5 stores integer tempo values. Fractional detected tempos are approximated with
+hidden, error-diffused tempo changes at measure boundaries—for example, alternating
+117 and 118 BPM to track a detected 117.454 BPM without accumulating drift.
+
 ## CLI
 
 ```powershell
 uv run bass-transcriber --version
 ```
+
+## Desktop interface
+
+Open the native file-picker interface with:
+
+```powershell
+uv run bass-transcriber-gui
+```
+
+Select a music file and destination folder, then choose **Process to GP5**. The UI
+runs the large-model automatic-instrument pipeline in the background and writes
+`<song>.bass.gp5` into the selected folder. Temporary WAV and JSON artifacts are
+removed after a successful or failed run.

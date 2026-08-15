@@ -189,7 +189,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         except ValueError as error:
             parser.error(str(error))
-        print(f"Wrote five-string BEADG GP5 at {round(rhythm_grid.bpm)} BPM to {gp5_output}")
+        print(
+            f"Wrote five-string BEADG GP5 using an integer tempo schedule "
+            f"for {rhythm_grid.bpm:.3f} BPM to {gp5_output}"
+        )
         return 0
 
     if args.command == "rhythm" and args.rhythm_command == "detect":

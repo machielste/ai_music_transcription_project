@@ -20,6 +20,9 @@ dependencies = [
 [project.scripts]
 bass-transcriber = "bass_transcriber.cli:main"
 
+[project.gui-scripts]
+bass-transcriber-gui = "bass_transcriber.gui:main"
+
 [dependency-groups]
 dev = [
     "mypy>=1.15",
