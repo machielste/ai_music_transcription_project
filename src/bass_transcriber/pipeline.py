@@ -25,6 +25,7 @@ class ProcessingResult:
     output: Path
     note_count: int
     bpm: float
+    copied_source: Path | None = None
 
 
 def output_path_for(source: Path, destination: Path) -> Path:
@@ -36,6 +37,7 @@ def process_song(
     source: Path,
     destination: Path,
     *,
+    copy_source: bool = False,
     progress: ProgressCallback | None = None,
 ) -> ProcessingResult:
     """Run the current production pipeline and copy out one final GP5 file."""
@@ -94,8 +96,15 @@ def process_song(
         write_gp5(temporary_gp5, notes, rhythm, title=f"{source.stem} - Bass")
         shutil.copy2(temporary_gp5, final_output)
 
+    copied_source: Path | None = None
+    source_copy = destination / source.name
+    if copy_source and source.resolve() != source_copy.resolve():
+        _notify(progress, 0.99, f"Copying original audio: {source.name}")
+        shutil.copy2(source, source_copy)
+        copied_source = source_copy
+
     _notify(progress, 1.0, f"Finished: {final_output.name}")
-    return ProcessingResult(final_output, len(notes), rhythm.bpm)
+    return ProcessingResult(final_output, len(notes), rhythm.bpm, copied_source)
 
 
 def _convert_to_wav(ffmpeg: str, source: Path, output: Path) -> None:

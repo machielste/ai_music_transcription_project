@@ -26,6 +26,7 @@ class TranscriberApp:
 
         self.source = tk.StringVar()
         self.destination = tk.StringVar(value=str((Path.cwd() / "outputs").resolve()))
+        self.copy_source = tk.BooleanVar(value=False)
         self.status = tk.StringVar(value="Select a music file and output folder.")
         self.progress = tk.DoubleVar(value=0.0)
         self.events: queue.Queue[tuple[str, object]] = queue.Queue()
@@ -59,15 +60,21 @@ class TranscriberApp:
             text="Large MuScriptor · automatic instrument classification · 5-string BEADG",
         ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(10, 4))
 
+        ttk.Checkbutton(
+            frame,
+            text="Also copy the original music file to the output folder",
+            variable=self.copy_source,
+        ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(4, 8))
+
         ttk.Progressbar(
             frame,
             variable=self.progress,
             maximum=100.0,
             mode="determinate",
-        ).grid(row=3, column=0, columnspan=3, sticky="ew", pady=8)
+        ).grid(row=4, column=0, columnspan=3, sticky="ew", pady=8)
 
         ttk.Label(frame, textvariable=self.status, wraplength=620).grid(
-            row=4, column=0, columnspan=3, sticky="w", pady=6
+            row=5, column=0, columnspan=3, sticky="w", pady=6
         )
 
         self.process_button = ttk.Button(
@@ -75,7 +82,7 @@ class TranscriberApp:
             text="Process to GP5",
             command=self._start_processing,
         )
-        self.process_button.grid(row=5, column=0, columnspan=3, pady=(14, 0))
+        self.process_button.grid(row=6, column=0, columnspan=3, pady=(14, 0))
 
     def _choose_source(self) -> None:
         selected = filedialog.askopenfilename(title="Select music file", filetypes=_AUDIO_TYPES)
@@ -101,28 +108,43 @@ class TranscriberApp:
             return
         destination = Path(destination_text)
         output = output_path_for(source, destination)
-        if output.exists() and not messagebox.askyesno(
-            "Replace existing file?",
-            f"{output.name} already exists. Replace it?",
+        replacements = [output] if output.exists() else []
+        source_copy = destination / source.name
+        if (
+            self.copy_source.get()
+            and source.resolve() != source_copy.resolve()
+            and source_copy.exists()
         ):
-            return
+            replacements.append(source_copy)
+        if replacements:
+            names = "\n".join(path.name for path in replacements)
+            if not messagebox.askyesno(
+                "Replace existing files?",
+                f"The following files already exist and will be replaced:\n\n{names}",
+            ):
+                return
 
         self.process_button.state(["disabled"])
         self.progress.set(0.0)
         self.status.set("Starting…")
         worker = threading.Thread(
             target=self._run_pipeline,
-            args=(source, destination),
+            args=(source, destination, self.copy_source.get()),
             daemon=True,
         )
         worker.start()
 
-    def _run_pipeline(self, source: Path, destination: Path) -> None:
+    def _run_pipeline(self, source: Path, destination: Path, copy_source: bool) -> None:
         def report(fraction: float, message: str) -> None:
             self.events.put(("progress", (fraction, message)))
 
         try:
-            result = process_song(source, destination, progress=report)
+            result = process_song(
+                source,
+                destination,
+                copy_source=copy_source,
+                progress=report,
+            )
         except Exception as error:  # The UI must report backend failures cleanly.
             self.events.put(("error", str(error)))
         else:
@@ -153,7 +175,12 @@ class TranscriberApp:
                     messagebox.showinfo(
                         "Transcription complete",
                         f"Created {result.output.name}\n"
-                        f"{result.note_count} notes · {result.bpm:.3f} BPM",
+                        f"{result.note_count} notes · {result.bpm:.3f} BPM"
+                        + (
+                            f"\nCopied {result.copied_source.name}"
+                            if result.copied_source is not None
+                            else ""
+                        ),
                     )
                 elif event == "error":
                     self.process_button.state(["!disabled"])

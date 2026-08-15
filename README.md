@@ -107,4 +107,5 @@ uv run bass-transcriber-gui
 Select a music file and destination folder, then choose **Process to GP5**. The UI
 runs the large-model automatic-instrument pipeline in the background and writes
 `<song>.bass.gp5` into the selected folder. Temporary WAV and JSON artifacts are
-removed after a successful or failed run.
+removed after a successful or failed run. Enable **Also copy the original music
+file to the output folder** when you want the source audio placed beside the GP5.
