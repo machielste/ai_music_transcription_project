@@ -25,7 +25,6 @@ Thumbs.db
 .cache/
 artifacts/
 outputs/
-models/
 *.wav
 *.flac
 *.mp3
