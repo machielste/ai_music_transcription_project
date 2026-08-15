@@ -19,6 +19,7 @@ def test_process_song_runs_pipeline_and_copies_gp5(
     source.write_bytes(b"audio")
     destination = tmp_path / "exports"
     progress: list[tuple[float, str]] = []
+    transcription_kwargs: dict[str, object] = {}
     notes = [BassNote(28, 0.0, 0.25, "electric_bass")]
     rhythm = RhythmGrid(
         detector="test",
@@ -37,7 +38,11 @@ def test_process_song_runs_pipeline_and_copies_gp5(
         "_convert_to_wav",
         lambda ffmpeg, input_path, output_path: output_path.write_bytes(b"wav"),
     )
-    monkeypatch.setattr(pipeline, "transcribe_bass", lambda *args, **kwargs: notes)
+    def transcribe(*args: object, **kwargs: object) -> list[BassNote]:
+        transcription_kwargs.update(kwargs)
+        return notes
+
+    monkeypatch.setattr(pipeline, "transcribe_bass", transcribe)
     monkeypatch.setattr(pipeline, "detect_rhythm", lambda *args, **kwargs: rhythm)
     monkeypatch.setattr(
         pipeline,
@@ -58,8 +63,53 @@ def test_process_song_runs_pipeline_and_copies_gp5(
     assert result.output.read_bytes() == b"gp5"
     assert result.note_count == 1
     assert result.bpm == pytest.approx(117.454)
+    assert transcription_kwargs["instrument"] is None
     assert progress[0] == (0.01, "Preparing audio")
     assert progress[-1] == (1.0, "Finished: source.bass.gp5")
+
+
+def test_process_song_can_force_electric_bass_conditioning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.mp3"
+    source.write_bytes(b"audio")
+    destination = tmp_path / "exports"
+    notes = [BassNote(28, 0.0, 0.25, "electric_bass")]
+    rhythm = RhythmGrid(
+        detector="test",
+        bpm=120.0,
+        beats_per_bar=4,
+        first_downbeat_seconds=0.0,
+        beat_times_seconds=(0.0, 0.5),
+        onset_delay_seconds=0.0,
+    )
+    transcription_kwargs: dict[str, object] = {}
+
+    monkeypatch.setattr(pipeline.shutil, "which", lambda name: "ffmpeg")
+    monkeypatch.setattr(
+        pipeline,
+        "_convert_to_wav",
+        lambda ffmpeg, input_path, output_path: output_path.write_bytes(b"wav"),
+    )
+
+    def transcribe(*args: object, **kwargs: object) -> list[BassNote]:
+        transcription_kwargs.update(kwargs)
+        return notes
+
+    monkeypatch.setattr(pipeline, "transcribe_bass", transcribe)
+    monkeypatch.setattr(pipeline, "detect_rhythm", lambda *args, **kwargs: rhythm)
+    monkeypatch.setattr(
+        pipeline,
+        "write_gp5",
+        lambda output, *args, **kwargs: (
+            output.write_bytes(b"gp5"),
+            GP5ExportResult(1, ()),
+        )[1],
+    )
+
+    pipeline.process_song(source, destination, force_electric_bass=True)
+
+    assert transcription_kwargs["instrument"] == "electric_bass"
 
 
 def test_process_song_optionally_copies_original_audio(

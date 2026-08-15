@@ -12,6 +12,7 @@ from pathlib import Path
 from bass_transcriber.export.gp5 import write_gp5
 from bass_transcriber.export.json import write_notes_json
 from bass_transcriber.export.rhythm_json import write_rhythm_json
+from bass_transcriber.models import BassInstrument
 from bass_transcriber.rhythm import detect_rhythm
 from bass_transcriber.transcription.muscriptor import transcribe_bass
 
@@ -39,6 +40,7 @@ def process_song(
     destination: Path,
     *,
     copy_source: bool = False,
+    force_electric_bass: bool = False,
     fingering_profile: str | None = "balanced",
     five_string: bool = True,
     progress: ProgressCallback | None = None,
@@ -59,7 +61,14 @@ def process_song(
         wav = work / "source.wav"
         _convert_to_wav(ffmpeg, source, wav)
 
-        _notify(progress, 0.05, "Loading MuScriptor large model")
+        instrument: BassInstrument | None = (
+            "electric_bass" if force_electric_bass else None
+        )
+        instrument_mode = "electric_bass" if force_electric_bass else "auto"
+        mode_description = (
+            " with electric-bass conditioning" if force_electric_bass else ""
+        )
+        _notify(progress, 0.05, f"Loading MuScriptor large model{mode_description}")
 
         def transcription_progress(completed: int, total: int) -> None:
             fraction = completed / total if total else 0.0
@@ -72,7 +81,7 @@ def process_song(
         notes = transcribe_bass(
             wav,
             size="large",
-            instrument=None,
+            instrument=instrument,
             device="cuda",
             progress=transcription_progress,
         )
@@ -82,7 +91,7 @@ def process_song(
             notes,
             source=wav,
             model_size="large",
-            instrument_mode="auto",
+            instrument_mode=instrument_mode,
         )
 
         _notify(progress, 0.80, "Detecting tempo and beat grid")
