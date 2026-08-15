@@ -25,12 +25,17 @@ def write_notes_json(
     *,
     source: Path,
     model_size: str,
+    instrument_mode: str = "unspecified",
 ) -> None:
     """Write raw notes and provenance in a stable, inspectable format."""
     document = {
         "schema_version": 1,
         "source": str(source.resolve()),
-        "transcriber": {"name": "muscriptor", "model_size": model_size},
+        "transcriber": {
+            "name": "muscriptor",
+            "model_size": model_size,
+            "instrument_mode": instrument_mode,
+        },
         "notes": [asdict(note) for note in notes],
     }
     output.parent.mkdir(parents=True, exist_ok=True)

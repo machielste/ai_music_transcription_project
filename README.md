@@ -49,6 +49,13 @@ The default output is `path\to\audio.notes.json`. Use `--instrument acoustic_bas
 for an acoustic-bass source. At this stage JSON is intentionally a diagnostic
 artifact; rhythm inference, fingering, and GP5 export come later.
 
+For a full mix, let MuScriptor classify instruments and retain only events it
+labels as electric or acoustic bass:
+
+```powershell
+uv run bass-transcriber transcribe song.wav --model large --instrument auto
+```
+
 Export the raw notes to MIDI for an auditory comparison with the source:
 
 ```powershell

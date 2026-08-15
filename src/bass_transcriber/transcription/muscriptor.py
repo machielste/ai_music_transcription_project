@@ -14,8 +14,10 @@ from muscriptor.events import (  # type: ignore[import-untyped]
     NoteEndEvent,
     ProgressEvent,
 )
+from soundfile import info  # type: ignore[import-untyped]
 
 from bass_transcriber.models import BassInstrument, BassNote
+from bass_transcriber.postprocess import clip_notes_to_duration
 
 ModelSize = Literal["small", "medium", "large"]
 MODEL_SIZES: tuple[ModelSize, ...] = ("small", "medium", "large")
@@ -67,14 +69,21 @@ def transcribe_bass(
     audio: Path,
     *,
     size: ModelSize = "small",
-    instrument: BassInstrument = "electric_bass",
+    instrument: BassInstrument | None = "electric_bass",
     device: str = "cuda",
     progress: ProgressCallback | None = None,
 ) -> list[BassNote]:
-    """Transcribe audio with MuScriptor constrained to one bass family."""
+    """Transcribe bass notes, optionally using a hard instrument constraint.
+
+    With ``instrument=None``, MuScriptor identifies all instruments itself and
+    :func:`notes_from_events` retains only events it labelled as bass.
+    """
     model = TranscriptionModel.load_model(size, device=device)
-    events = model.transcribe(audio, instruments=[instrument])
-    return notes_from_events(events, progress=progress)
+    instruments = None if instrument is None else [instrument]
+    events = model.transcribe(audio, instruments=instruments)
+    notes = notes_from_events(events, progress=progress)
+    duration_seconds = float(info(str(audio)).duration)
+    return clip_notes_to_duration(notes, duration_seconds)
 
 
 def notes_from_events(

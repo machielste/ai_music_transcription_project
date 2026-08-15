@@ -57,8 +57,9 @@ def build_parser() -> argparse.ArgumentParser:
     transcribe_parser.add_argument("--model", choices=MODEL_SIZES, default="small")
     transcribe_parser.add_argument(
         "--instrument",
-        choices=("electric_bass", "acoustic_bass"),
+        choices=("auto", "electric_bass", "acoustic_bass"),
         default="electric_bass",
+        help="use 'auto' to classify all instruments, then retain labelled bass events",
     )
     transcribe_parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
 
@@ -103,10 +104,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         def show_progress(completed: int, total: int) -> None:
             print(f"Transcribing chunk {completed}/{total}", file=sys.stderr)
 
+        instrument_mode = cast(str, args.instrument)
+        instrument = None if instrument_mode == "auto" else cast(BassInstrument, instrument_mode)
         notes = transcribe_bass(
             audio,
             size=cast(ModelSize, args.model),
-            instrument=cast(BassInstrument, args.instrument),
+            instrument=instrument,
             device=cast(str, args.device),
             progress=show_progress,
         )
@@ -115,6 +118,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             notes,
             source=audio,
             model_size=cast(str, args.model),
+            instrument_mode=instrument_mode,
         )
         print(f"Wrote {len(notes)} notes to {output}")
         return 0

@@ -20,6 +20,12 @@ def test_event_stream_is_converted_to_sorted_neutral_notes() -> None:
         index=1,
         instrument="electric_bass",
     )
+    piano = NoteStartEvent(
+        pitch=60,
+        start_time=0.5,
+        index=2,
+        instrument="piano",
+    )
     progress: list[tuple[int, int]] = []
 
     notes = notes_from_events(
@@ -29,6 +35,8 @@ def test_event_stream_is_converted_to_sorted_neutral_notes() -> None:
             NoteEndEvent(end_time=1.5, start_event=later),
             earlier,
             NoteEndEvent(end_time=0.75, start_event=earlier),
+            piano,
+            NoteEndEvent(end_time=1.0, start_event=piano),
             ProgressEvent(completed=1, total=1),
         ],
         progress=lambda completed, total: progress.append((completed, total)),
