@@ -26,6 +26,7 @@ class ProcessingResult:
     note_count: int
     bpm: float
     copied_source: Path | None = None
+    warnings: tuple[str, ...] = ()
 
 
 def output_path_for(source: Path, destination: Path) -> Path:
@@ -93,8 +94,25 @@ def process_song(
 
         _notify(progress, 0.93, "Writing synchronized five-string GP5")
         temporary_gp5 = work / "result.gp5"
-        write_gp5(temporary_gp5, notes, rhythm, title=f"{source.stem} - Bass")
+        export_result = write_gp5(temporary_gp5, notes, rhythm, title=f"{source.stem} - Bass")
         shutil.copy2(temporary_gp5, final_output)
+
+    warnings: list[str] = []
+    if export_result.dropped_pitches:
+        pitch_counts = {
+            pitch: export_result.dropped_pitches.count(pitch)
+            for pitch in sorted(set(export_result.dropped_pitches))
+        }
+        pitch_summary = ", ".join(
+            f"{pitch} ({count}x)" if count > 1 else str(pitch)
+            for pitch, count in pitch_counts.items()
+        )
+        count = len(export_result.dropped_pitches)
+        warnings.append(
+            f"Dropped {count} note{'s' if count != 1 else ''} outside the five-string "
+            f"BEADG range. MIDI pitch{'es' if len(pitch_counts) != 1 else ''}: "
+            f"{pitch_summary}."
+        )
 
     copied_source: Path | None = None
     source_copy = destination / source.name
@@ -104,7 +122,13 @@ def process_song(
         copied_source = source_copy
 
     _notify(progress, 1.0, f"Finished: {final_output.name}")
-    return ProcessingResult(final_output, len(notes), rhythm.bpm, copied_source)
+    return ProcessingResult(
+        final_output,
+        len(notes),
+        rhythm.bpm,
+        copied_source,
+        tuple(warnings),
+    )
 
 
 def _convert_to_wav(ffmpeg: str, source: Path, output: Path) -> None:

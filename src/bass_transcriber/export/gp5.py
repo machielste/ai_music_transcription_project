@@ -56,16 +56,26 @@ class _TabNote:
     fret: int
 
 
+@dataclass(frozen=True, slots=True)
+class GP5ExportResult:
+    """Details about notes accepted or dropped during GP5 export."""
+
+    exported_note_count: int
+    dropped_pitches: tuple[int, ...]
+
+
 def write_gp5(
     output: Path,
     notes: list[BassNote],
     grid: RhythmGrid,
     *,
     title: str,
-) -> None:
+) -> GP5ExportResult:
     """Write a first-pass, 4/4, five-string BEADG GP5 score."""
-    tab_notes = _quantize_and_finger(notes, grid)
+    tab_notes, dropped_pitches = _quantize_and_finger(notes, grid)
     if not tab_notes:
+        if dropped_pitches:
+            raise ValueError("cannot export: every transcribed note is outside BEADG range")
         raise ValueError("cannot export an empty transcription")
 
     measure_count = math.ceil(tab_notes[-1].end_slot / SLOTS_PER_BAR)
@@ -101,15 +111,24 @@ def write_gp5(
     output.parent.mkdir(parents=True, exist_ok=True)
     guitarpro.write(song, str(output), version=(5, 1, 0))
     _validate_round_trip(output)
+    return GP5ExportResult(len(tab_notes), tuple(dropped_pitches))
 
 
-def _quantize_and_finger(notes: list[BassNote], grid: RhythmGrid) -> list[_TabNote]:
+def _quantize_and_finger(
+    notes: list[BassNote], grid: RhythmGrid
+) -> tuple[list[_TabNote], list[int]]:
     period_seconds = 60.0 / grid.bpm
     first_beat = grid.beat_times_seconds[0]
     offset_slots = round(first_beat / period_seconds * SUBDIVISIONS_PER_BEAT)
     result: list[_TabNote] = []
+    dropped_pitches: list[int] = []
 
     for raw_note in sorted(notes, key=lambda item: item.start_seconds):
+        try:
+            string, fret = _choose_fingering(raw_note.pitch)
+        except ValueError:
+            dropped_pitches.append(raw_note.pitch)
+            continue
         corrected_start = raw_note.start_seconds - grid.onset_delay_seconds
         corrected_end = raw_note.end_seconds - grid.onset_delay_seconds
         start_slot = max(
@@ -122,7 +141,6 @@ def _quantize_and_finger(notes: list[BassNote], grid: RhythmGrid) -> list[_TabNo
             round((corrected_end - first_beat) / period_seconds * SUBDIVISIONS_PER_BEAT)
             + offset_slots,
         )
-        string, fret = _choose_fingering(raw_note.pitch)
         result.append(_TabNote(raw_note.pitch, start_slot, end_slot, string, fret))
 
     # The source is monophonic. Prevent independently rounded offsets from
@@ -142,7 +160,7 @@ def _quantize_and_finger(notes: list[BassNote], grid: RhythmGrid) -> list[_TabNo
                 tab_note.fret,
             )
         )
-    return cleaned
+    return cleaned, dropped_pitches
 
 
 def _choose_fingering(pitch: int) -> tuple[int, int]:

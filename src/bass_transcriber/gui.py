@@ -173,12 +173,21 @@ class TranscriberApp:
                     self.progress.set(100.0)
                     self.status.set(f"Finished: {result.output}")
                     messagebox.showinfo(
-                        "Transcription complete",
+                        (
+                            "Transcription complete with warnings"
+                            if result.warnings
+                            else "Transcription complete"
+                        ),
                         f"Created {result.output.name}\n"
                         f"{result.note_count} notes · {result.bpm:.3f} BPM"
                         + (
                             f"\nCopied {result.copied_source.name}"
                             if result.copied_source is not None
+                            else ""
+                        )
+                        + (
+                            "\n\nWarnings:\n- " + "\n- ".join(result.warnings)
+                            if result.warnings
                             else ""
                         ),
                     )
