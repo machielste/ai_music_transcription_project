@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import queue
+import subprocess
+import sys
 import threading
 import tkinter as tk
 from dataclasses import replace
@@ -16,10 +19,11 @@ from bass_transcriber.fingering_debug import (
 from bass_transcriber.pipeline import (
     ProcessingResult,
     debug_path_for,
-    output_path_for,
+    export_gp5_from_fingering_draft,
+    fingering_path_for,
     process_song,
     raw_notes_path_for,
-    rewrite_gp5_fingering,
+    rewrite_fingering_draft,
 )
 
 _AUDIO_TYPES = [
@@ -49,7 +53,7 @@ class TranscriberApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("Bass Transcriber")
-        self.root.minsize(780, 470)
+        self.root.minsize(780, 540)
 
         self.source = tk.StringVar()
         self.destination = tk.StringVar(value=str((Path.cwd() / "outputs").resolve()))
@@ -158,7 +162,7 @@ class TranscriberApp:
 
         self.process_button = ttk.Button(
             frame,
-            text="Process to GP5",
+            text="Generate fingering draft",
             command=self._start_processing,
         )
         self.process_button.grid(row=11, column=0, sticky="ew", padx=(0, 5), pady=(14, 0))
@@ -179,6 +183,26 @@ class TranscriberApp:
         )
         self.apply_fingering_button.grid(
             row=11, column=2, sticky="ew", padx=(5, 0), pady=(14, 0)
+        )
+
+        self.open_draft_button = ttk.Button(
+            frame,
+            text="Open fingering JSON",
+            command=self._open_fingering_draft,
+            state="disabled",
+        )
+        self.open_draft_button.grid(
+            row=12, column=0, columnspan=2, sticky="ew", padx=(0, 5), pady=(8, 0)
+        )
+
+        self.export_button = ttk.Button(
+            frame,
+            text="Validate and convert to GP5",
+            command=self._start_draft_export,
+            state="disabled",
+        )
+        self.export_button.grid(
+            row=12, column=2, sticky="ew", padx=(5, 0), pady=(8, 0)
         )
 
         self.raw_notes_input.trace_add("write", self._raw_notes_selection_changed)
@@ -229,8 +253,8 @@ class TranscriberApp:
                 "Select an existing .notes.json file or clear the optional field.",
             )
             return
-        output = output_path_for(source, destination)
-        replacements = [output] if output.exists() else []
+        fingering_draft = fingering_path_for(source, destination)
+        replacements = [fingering_draft] if fingering_draft.exists() else []
         debug_log = debug_path_for(source, destination)
         if debug_log.exists():
             replacements.append(debug_log)
@@ -257,6 +281,8 @@ class TranscriberApp:
         self.process_button.state(["disabled"])
         self.compare_button.state(["disabled"])
         self.apply_fingering_button.state(["disabled"])
+        self.open_draft_button.state(["disabled"])
+        self.export_button.state(["disabled"])
         self.progress.set(0.0)
         self.status.set("Starting…")
         worker = threading.Thread(
@@ -302,7 +328,7 @@ class TranscriberApp:
 
     def _apply_selected_fingering(self) -> None:
         result = self.latest_result
-        if result is None:
+        if result is None or result.fingering_draft is None:
             messagebox.showerror(
                 "No completed transcription",
                 "Process a song before applying a fingering style.",
@@ -311,28 +337,76 @@ class TranscriberApp:
         style_label = self.fingering_style.get()
         if not messagebox.askyesno(
             "Apply fingering style?",
-            f"Replace {result.output.name} using {style_label}?",
+            f"Replace {result.fingering_draft.name} using {style_label}?\n\n"
+            "Any manual edits in the draft will be lost.",
         ):
             return
         profile = _FINGERING_OPTIONS[style_label]
-        self.process_button.state(["disabled"])
-        self.apply_fingering_button.state(["disabled"])
+        self._set_action_buttons_enabled(False)
         self.status.set(f"Applying {style_label}…")
         worker = threading.Thread(
-            target=self._run_fingering_export,
+            target=self._run_fingering_draft,
             args=(result, profile, style_label),
             daemon=True,
         )
         worker.start()
 
-    def _run_fingering_export(
+    def _open_fingering_draft(self) -> None:
+        result = self.latest_result
+        if result is None or result.fingering_draft is None:
+            messagebox.showerror(
+                "No fingering draft",
+                "Generate a fingering draft before opening it.",
+            )
+            return
+        if not result.fingering_draft.is_file():
+            messagebox.showerror(
+                "Missing fingering draft",
+                f"The draft no longer exists:\n{result.fingering_draft}",
+            )
+            return
+        try:
+            _open_local_file(result.fingering_draft)
+        except OSError as error:
+            messagebox.showerror("Could not open fingering draft", str(error))
+            return
+        self.status.set(f"Editing fingering draft: {result.fingering_draft}")
+
+    def _start_draft_export(self) -> None:
+        result = self.latest_result
+        if result is None or result.fingering_draft is None:
+            messagebox.showerror(
+                "No fingering draft",
+                "Generate a fingering draft before converting it to GP5.",
+            )
+            return
+        if not result.fingering_draft.is_file():
+            messagebox.showerror(
+                "Missing fingering draft",
+                f"The draft no longer exists:\n{result.fingering_draft}",
+            )
+            return
+        if result.output.exists() and not messagebox.askyesno(
+            "Replace existing GP5?",
+            f"Replace {result.output.name} with the current fingering draft?",
+        ):
+            return
+        self._set_action_buttons_enabled(False)
+        self.status.set(f"Validating {result.fingering_draft.name}…")
+        threading.Thread(
+            target=self._run_draft_export,
+            args=(result,),
+            daemon=True,
+        ).start()
+
+    def _run_fingering_draft(
         self,
         result: ProcessingResult,
         profile: str | None,
         style_label: str,
     ) -> None:
         try:
-            export_result = rewrite_gp5_fingering(result, profile)
+            export_result = rewrite_fingering_draft(result, profile)
         except Exception as error:  # The UI must report backend failures cleanly.
             self.events.put(("fingering_error", str(error)))
         else:
@@ -343,6 +417,22 @@ class TranscriberApp:
                     (updated, style_label, export_result.exported_note_count),
                 )
             )
+
+    def _run_draft_export(self, result: ProcessingResult) -> None:
+        try:
+            export_result = export_gp5_from_fingering_draft(result)
+        except Exception as error:  # The UI must report backend failures cleanly.
+            self.events.put(("draft_export_error", str(error)))
+        else:
+            self.events.put(("draft_export_done", (result, export_result.exported_note_count)))
+
+    def _set_action_buttons_enabled(self, enabled: bool) -> None:
+        state = ["!disabled"] if enabled else ["disabled"]
+        self.process_button.state(state)
+        self.compare_button.state(state)
+        self.apply_fingering_button.state(state)
+        self.open_draft_button.state(state)
+        self.export_button.state(state)
 
     def _stop_debugger(self) -> None:
         if self.debug_session is None:
@@ -378,6 +468,7 @@ class TranscriberApp:
                 raw_notes_input=raw_notes_input,
                 fingering_profile=fingering_profile,
                 five_string=five_string,
+                generate_gp5=False,
                 progress=report,
             )
         except Exception as error:  # The UI must report backend failures cleanly.
@@ -408,20 +499,21 @@ class TranscriberApp:
                     result = payload
                     if not isinstance(result, ProcessingResult):
                         raise TypeError("unexpected processing result")
-                    self.process_button.state(["!disabled"])
-                    self.compare_button.state(["!disabled"])
-                    self.apply_fingering_button.state(["!disabled"])
+                    self._set_action_buttons_enabled(True)
                     self.latest_result = result
                     self.progress.set(100.0)
-                    self.status.set(f"Finished: {result.output}")
+                    if result.fingering_draft is None:
+                        raise TypeError("processing result is missing its fingering draft")
+                    self.status.set(f"Fingering draft ready: {result.fingering_draft}")
                     messagebox.showinfo(
                         (
                             "Transcription complete with warnings"
                             if result.warnings
                             else "Transcription complete"
                         ),
-                        f"Created {result.output.name}\n"
+                        f"Created editable draft {result.fingering_draft.name}\n"
                         f"{result.note_count} notes · {result.bpm:.3f} BPM\n"
+                        "Edit the JSON if needed, then choose Validate and convert to GP5.\n"
                         f"Debug log: {result.debug_log.name}"
                         + (
                             f"\nRaw model output: {result.raw_notes.name}"
@@ -455,19 +547,38 @@ class TranscriberApp:
                         raise TypeError("unexpected fingering export result")
                     result, style_label, note_count = payload
                     self.latest_result = result
-                    self.process_button.state(["!disabled"])
-                    self.apply_fingering_button.state(["!disabled"])
-                    self.status.set(f"Applied {style_label}: {result.output}")
+                    self._set_action_buttons_enabled(True)
+                    self.status.set(f"Applied {style_label}: {result.fingering_draft}")
                     messagebox.showinfo(
                         "Fingering applied",
-                        f"Updated {result.output.name} using {style_label}.\n"
-                        f"Exported {note_count} notes.",
+                        f"Updated {result.fingering_draft.name} using {style_label}.\n"
+                        f"Resolved {note_count} notes. You can now edit or export the draft.",
                     )
                 elif event == "fingering_error":
-                    self.process_button.state(["!disabled"])
-                    self.apply_fingering_button.state(["!disabled"])
+                    self._set_action_buttons_enabled(True)
                     self.status.set(f"Could not apply fingering: {payload}")
-                    messagebox.showerror("Fingering export failed", str(payload))
+                    messagebox.showerror("Fingering draft failed", str(payload))
+                elif event == "draft_export_done":
+                    if not (
+                        isinstance(payload, tuple)
+                        and len(payload) == 2
+                        and isinstance(payload[0], ProcessingResult)
+                        and isinstance(payload[1], int)
+                    ):
+                        raise TypeError("unexpected draft export result")
+                    result, note_count = payload
+                    self._set_action_buttons_enabled(True)
+                    self.progress.set(100.0)
+                    self.status.set(f"Created GP5: {result.output}")
+                    messagebox.showinfo(
+                        "GP5 export complete",
+                        f"Validated {result.fingering_draft.name} and created "
+                        f"{result.output.name}.\nExported {note_count} notes.",
+                    )
+                elif event == "draft_export_error":
+                    self._set_action_buttons_enabled(True)
+                    self.status.set(f"Could not convert draft: {payload}")
+                    messagebox.showerror("Fingering draft is invalid", str(payload))
                 elif event == "error":
                     self.process_button.state(["!disabled"])
                     self.status.set(f"Failed: {payload}")
@@ -483,3 +594,13 @@ def main() -> int:
     TranscriberApp(root)
     root.mainloop()
     return 0
+
+
+def _open_local_file(path: Path) -> None:
+    """Open a local artifact in the platform's associated application."""
+    windows_opener = getattr(os, "startfile", None)
+    if windows_opener is not None:
+        windows_opener(path)
+        return
+    command = ["open", str(path)] if sys.platform == "darwin" else ["xdg-open", str(path)]
+    subprocess.Popen(command)  # noqa: S603 - explicit local file selected by the user

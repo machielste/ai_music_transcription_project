@@ -10,6 +10,7 @@ from bass_transcriber.models import BassNote, RhythmGrid
 from bass_transcriber.pipeline import (
     ProcessingResult,
     debug_path_for,
+    fingering_path_for,
     output_path_for,
     raw_notes_path_for,
     rewrite_gp5_fingering,
@@ -25,6 +26,49 @@ def test_output_path_uses_source_stem() -> None:
     assert raw_notes_path_for(Path("music/song.mp3"), Path("exports")) == Path(
         "exports/song.bass.raw.notes.json"
     )
+    assert fingering_path_for(Path("music/song.mp3"), Path("exports")) == Path(
+        "exports/song.bass.fingering.json"
+    )
+
+
+def test_process_song_can_stop_at_an_editable_fingering_draft(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.mp3"
+    source.write_bytes(b"audio")
+    destination = tmp_path / "exports"
+    notes = [BassNote(38, 0.0, 0.25, "electric_bass")]
+    rhythm = RhythmGrid(
+        detector="test",
+        bpm=120.0,
+        beats_per_bar=4,
+        first_downbeat_seconds=0.0,
+        beat_times_seconds=(0.0, 0.5),
+        onset_delay_seconds=0.0,
+    )
+    monkeypatch.setattr(pipeline.shutil, "which", lambda name: "ffmpeg")
+    monkeypatch.setattr(
+        pipeline,
+        "_convert_to_wav",
+        lambda ffmpeg, input_path, output_path: output_path.write_bytes(b"wav"),
+    )
+    monkeypatch.setattr(pipeline, "transcribe_bass", lambda *args, **kwargs: notes)
+    monkeypatch.setattr(pipeline, "detect_rhythm", lambda *args, **kwargs: rhythm)
+
+    def unexpected_gp5(*args: object, **kwargs: object) -> GP5ExportResult:
+        raise AssertionError("GP5 export must wait for the editable draft")
+
+    monkeypatch.setattr(pipeline, "write_gp5", unexpected_gp5)
+
+    result = pipeline.process_song(source, destination, generate_gp5=False)
+
+    assert result.fingering_draft == destination / "source.bass.fingering.json"
+    assert result.fingering_draft.is_file()
+    assert not result.output.exists()
+    draft = json.loads(result.fingering_draft.read_text(encoding="utf-8"))
+    assert draft["document_type"] == "bass_fingering_draft"
+    assert draft["notes"][0]["pitch"] == 38
+    assert draft["notes"][0]["id"] == 1
 
 
 def test_process_song_runs_pipeline_and_copies_gp5(

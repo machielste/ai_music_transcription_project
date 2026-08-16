@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from itertools import pairwise
 from pathlib import Path
@@ -80,13 +81,40 @@ def write_gp5(
             )
         raise ValueError("cannot export an empty transcription")
 
+    write_resolved_gp5(
+        output,
+        tab_notes,
+        grid,
+        title=title,
+        strings=strings,
+    )
+    return GP5ExportResult(
+        len(tab_notes),
+        tuple(dropped_pitches),
+        tuple(pruned_chords),
+    )
+
+
+def write_resolved_gp5(
+    output: Path,
+    tab_notes: Sequence[ResolvedTabNote],
+    grid: RhythmGrid,
+    *,
+    title: str,
+    strings: Sequence[tuple[int, int]] = BEADG_STRINGS,
+) -> None:
+    """Write GP5 from already quantized and fingered tablature notes."""
+    if not tab_notes:
+        raise ValueError("cannot export an empty fingering draft")
+    resolved_strings = tuple(strings)
+
     measure_count = math.ceil(max(note.end_slot for note in tab_notes) / SLOTS_PER_BAR)
     tempo_schedule = _tempo_schedule(grid.bpm, measure_count)
     song = _new_song(
         title=title,
         initial_bpm=tempo_schedule[0],
         measure_count=measure_count,
-        strings=strings,
+        strings=resolved_strings,
     )
     track = song.tracks[0]
 
@@ -129,12 +157,7 @@ def write_gp5(
 
     output.parent.mkdir(parents=True, exist_ok=True)
     guitarpro.write(song, str(output), version=(5, 1, 0))
-    _validate_round_trip(output, strings)
-    return GP5ExportResult(
-        len(tab_notes),
-        tuple(dropped_pitches),
-        tuple(pruned_chords),
-    )
+    _validate_round_trip(output, resolved_strings)
 
 
 def _quantize_and_finger(

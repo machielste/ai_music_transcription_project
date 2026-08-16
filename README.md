@@ -108,11 +108,16 @@ Open the native file-picker interface with:
 uv run bass-transcriber-gui
 ```
 
-Select a music file and destination folder, then choose **Process to GP5**. The UI
-runs the large-model automatic-instrument pipeline in the background and writes
-`<song>.bass.gp5`, a reusable `<song>.bass.raw.notes.json` model artifact, and a
-machine-readable `<song>.bass.debug.json` diagnostic log into the selected
-folder. The debug log is retained on both successful and failed runs and includes
+Select a music file and destination folder, then choose **Generate fingering
+draft**. The UI runs the large-model automatic-instrument pipeline in the
+background and writes an editable `<song>.bass.fingering.json`, a reusable
+`<song>.bass.raw.notes.json` model artifact, and a machine-readable
+`<song>.bass.debug.json` diagnostic log into the selected folder. Open the draft
+in your associated JSON editor, change only the desired `string` and `fret`
+values, then choose **Validate and convert to GP5**. Invalid or physically
+impossible edits are rejected before the existing GP5 is replaced.
+
+The debug log is retained on both successful and failed runs and includes
 the unfiltered MuScriptor event stream, per-chunk summaries, warnings, stage
 timings, settings, environment details, filtering decisions, rhythm output, and
 export counts. Temporary WAV and rhythm artifacts are removed after a successful
@@ -121,9 +126,9 @@ when you want the source audio placed beside the GP5.
 
 To change postprocessing later, select the original music file and destination,
 then optionally select an existing `.notes.json` file under **Raw model output**.
-Choosing **Process to GP5** then skips MuScriptor and reuses those untouched note
+Choosing **Generate fingering draft** then skips MuScriptor and reuses those untouched note
 events while rerunning rhythm detection, spectral retrigger merging, tuning,
-fingering, GP5 export, and comparison preparation. The selected music file is
+fingering, and comparison preparation. The selected music file is
 authoritative, so the original audio path stored inside a moved raw artifact does
 not need to remain valid.
 
@@ -147,8 +152,10 @@ After processing completes, choose **Open fingering comparison** to launch the
 synchronized perspective-highway view for the retained transcription. Compare
 the strategies in the browser, return to the desktop window, select the desired
 style from **Selected fingering style**, and choose **Apply selected fingering**.
-This rewrites the GP5 from the retained notes and rhythm grid without running
-MuScriptor or rhythm detection again.
+This regenerates the editable fingering draft from the retained notes and rhythm
+grid without running MuScriptor or rhythm detection again. It overwrites manual
+draft edits after confirmation. Choose **Validate and convert to GP5** when the
+draft is ready.
 
 The **Use 5-string bass** toggle is off by default. It selects BEADG when enabled
 and four-string EADG when disabled. In four-string mode, the optimizer cannot
