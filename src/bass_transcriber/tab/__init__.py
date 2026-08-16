@@ -10,6 +10,13 @@ from bass_transcriber.tab.fingering import (
     generate_candidates,
     optimize_fingering,
 )
+from bass_transcriber.tab.timeline import (
+    FingeringTimeline,
+    ResolvedTabNote,
+    build_fingering_timeline,
+    slot_duration_seconds,
+    source_aligned_seconds,
+)
 
 __all__ = [
     "BEADG_STRINGS",
@@ -18,6 +25,11 @@ __all__ = [
     "FingeringCandidate",
     "FingeringEvent",
     "FingeringProfile",
+    "FingeringTimeline",
+    "ResolvedTabNote",
+    "build_fingering_timeline",
     "generate_candidates",
     "optimize_fingering",
+    "slot_duration_seconds",
+    "source_aligned_seconds",
 ]

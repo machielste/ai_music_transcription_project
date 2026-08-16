@@ -14,6 +14,10 @@ from bass_transcriber.export.gp5 import write_gp5
 from bass_transcriber.export.json import read_notes_json, write_notes_json
 from bass_transcriber.export.midi import write_midi
 from bass_transcriber.export.rhythm_json import read_rhythm_json, write_rhythm_json
+from bass_transcriber.fingering_debug import (
+    DEFAULT_DEBUG_PROFILES,
+    serve_fingering_debugger,
+)
 from bass_transcriber.models import BassInstrument
 from bass_transcriber.rhythm import detect_rhythm
 from bass_transcriber.tab import FINGERING_PROFILES
@@ -96,6 +100,45 @@ def build_parser() -> argparse.ArgumentParser:
         choices=(*FINGERING_PROFILES, "legacy"),
         default="balanced",
         help="phrase-level fingering style, or 'legacy' to disable optimization",
+    )
+
+    debug_parser = subparsers.add_parser("debug", help="open interactive debugging tools")
+    debug_subparsers = debug_parser.add_subparsers(dest="debug_command", required=True)
+    fingering_debug_parser = debug_subparsers.add_parser(
+        "fingerings",
+        help="compare fingering strategies in synchronized perspective note highways",
+    )
+    fingering_debug_parser.add_argument("notes", type=Path)
+    fingering_debug_parser.add_argument("--rhythm", type=Path, required=True)
+    fingering_debug_parser.add_argument(
+        "--audio",
+        type=Path,
+        help="source audio; defaults to the source recorded in the notes JSON",
+    )
+    fingering_debug_parser.add_argument(
+        "--profiles",
+        nargs="+",
+        choices=(*FINGERING_PROFILES, "legacy"),
+        default=DEFAULT_DEBUG_PROFILES,
+        help="strategies to show, in reference/comparison order",
+    )
+    fingering_debug_parser.add_argument(
+        "--strings",
+        type=int,
+        choices=(4, 5),
+        default=5,
+        help="bass string count and tuning: 4=EADG, 5=BEADG",
+    )
+    fingering_debug_parser.add_argument(
+        "--port",
+        type=int,
+        default=0,
+        help="localhost port; zero selects an available port",
+    )
+    fingering_debug_parser.add_argument(
+        "--no-open",
+        action="store_true",
+        help="serve the debugger without opening the default browser",
     )
 
     rhythm_parser = subparsers.add_parser("rhythm", help="analyze musical timing")
@@ -218,6 +261,34 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "the BEADG range",
                 file=sys.stderr,
             )
+        return 0
+
+    if args.command == "debug" and args.debug_command == "fingerings":
+        notes_path = cast(Path, args.notes)
+        rhythm_path = cast(Path, args.rhythm)
+        if not notes_path.is_file():
+            parser.error(f"notes JSON does not exist: {notes_path}")
+        if not rhythm_path.is_file():
+            parser.error(f"rhythm JSON does not exist: {rhythm_path}")
+        if not 0 <= args.port <= 65535:
+            parser.error("port must be between 0 and 65535")
+        try:
+            notes_document = read_notes_json(notes_path)
+            rhythm_grid = read_rhythm_json(rhythm_path)
+            audio = cast(Path | None, args.audio) or notes_document.source
+            if not audio.is_file():
+                parser.error(f"source audio does not exist: {audio}")
+            serve_fingering_debugger(
+                audio,
+                notes_document.notes,
+                rhythm_grid,
+                profiles=cast(Sequence[str], args.profiles),
+                five_string=args.strings == 5,
+                port=cast(int, args.port),
+                open_browser=not cast(bool, args.no_open),
+            )
+        except (OSError, ValueError) as error:
+            parser.error(str(error))
         return 0
 
     if args.command == "rhythm" and args.rhythm_command == "detect":

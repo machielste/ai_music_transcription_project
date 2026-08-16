@@ -52,3 +52,26 @@ def test_gp5_fingering_profile_can_be_selected() -> None:
 
     assert args.fingering_profile == "slap_funk"
     assert args.strings == 4
+
+
+def test_fingering_debugger_profiles_can_be_selected() -> None:
+    args = build_parser().parse_args(
+        [
+            "debug",
+            "fingerings",
+            "notes.json",
+            "--rhythm",
+            "rhythm.json",
+            "--profiles",
+            "balanced",
+            "legacy",
+            "--strings",
+            "4",
+            "--no-open",
+        ]
+    )
+
+    assert args.debug_command == "fingerings"
+    assert args.profiles == ["balanced", "legacy"]
+    assert args.strings == 4
+    assert args.no_open is True

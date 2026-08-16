@@ -10,10 +10,10 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from bass_transcriber.debug import DebugRun, analyze_audio_file
-from bass_transcriber.export.gp5 import write_gp5
+from bass_transcriber.export.gp5 import GP5ExportResult, write_gp5
 from bass_transcriber.export.json import write_notes_json
 from bass_transcriber.export.rhythm_json import write_rhythm_json
-from bass_transcriber.models import BassInstrument
+from bass_transcriber.models import BassInstrument, BassNote, RhythmGrid
 from bass_transcriber.postprocess import merge_false_retriggers
 from bass_transcriber.rhythm import detect_rhythm
 from bass_transcriber.transcription.muscriptor import TranscriptionTrace, transcribe_bass
@@ -31,6 +31,11 @@ class ProcessingResult:
     debug_log: Path
     copied_source: Path | None = None
     warnings: tuple[str, ...] = ()
+    source: Path | None = None
+    notes: tuple[BassNote, ...] = ()
+    rhythm: RhythmGrid | None = None
+    five_string: bool = True
+    fingering_profile: str | None = "balanced"
 
 
 def output_path_for(source: Path, destination: Path) -> Path:
@@ -230,12 +235,17 @@ def process_song(
         debug_run.write(final_debug_log)
         _notify(progress, 1.0, f"Finished: {final_output.name}")
         return ProcessingResult(
-            final_output,
-            len(notes),
-            rhythm.bpm,
-            final_debug_log,
-            copied_source,
-            tuple(pipeline_warnings),
+            output=final_output,
+            note_count=len(notes),
+            bpm=rhythm.bpm,
+            debug_log=final_debug_log,
+            copied_source=copied_source,
+            warnings=tuple(pipeline_warnings),
+            source=source,
+            notes=tuple(notes),
+            rhythm=rhythm,
+            five_string=five_string,
+            fingering_profile=fingering_profile,
         )
     except Exception as error:
         debug_run.set_section("transcription", transcription_trace.as_dict())
@@ -245,6 +255,31 @@ def process_song(
         except Exception as debug_error:
             error.add_note(f"Additionally failed to write debug log: {debug_error}")
         raise
+
+
+def rewrite_gp5_fingering(
+    result: ProcessingResult,
+    fingering_profile: str | None,
+) -> GP5ExportResult:
+    """Rewrite a completed GP5 with another fingering without retranscribing."""
+    if result.source is None or result.rhythm is None or not result.notes:
+        raise ValueError("processing result does not retain reusable transcription data")
+    result.output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix="bass-transcriber-fingering-",
+        dir=result.output.parent,
+    ) as temporary:
+        temporary_output = Path(temporary) / result.output.name
+        export_result = write_gp5(
+            temporary_output,
+            list(result.notes),
+            result.rhythm,
+            title=f"{result.source.stem} - Bass",
+            fingering_profile=fingering_profile,
+            five_string=result.five_string,
+        )
+        temporary_output.replace(result.output)
+    return export_result
 
 
 def _convert_to_wav(ffmpeg: str, source: Path, output: Path) -> None:

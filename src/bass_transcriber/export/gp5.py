@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from itertools import groupby, pairwise, product
+from itertools import pairwise
 from pathlib import Path
 
 import guitarpro  # type: ignore[import-untyped]
@@ -27,10 +27,8 @@ from bass_transcriber.models import BassNote, RhythmGrid
 from bass_transcriber.tab import (
     BEADG_STRINGS,
     EADG_STRINGS,
-    FingeringCandidate,
-    FingeringEvent,
-    generate_candidates,
-    optimize_fingering,
+    ResolvedTabNote,
+    build_fingering_timeline,
 )
 
 SUBDIVISIONS_PER_BEAT = 8
@@ -45,15 +43,6 @@ _DURATION_VALUE_BY_SLOTS = {
     2: Duration.sixteenth,
     1: Duration.thirtySecond,
 }
-
-
-@dataclass(frozen=True, slots=True)
-class _TabNote:
-    pitch: int
-    start_slot: int
-    end_slot: int
-    string: int
-    fret: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,146 +131,14 @@ def _quantize_and_finger(
     grid: RhythmGrid,
     fingering_profile: str | None,
     strings: tuple[tuple[int, int], ...],
-) -> tuple[list[_TabNote], list[int]]:
-    period_seconds = 60.0 / grid.bpm
-    first_beat = grid.beat_times_seconds[0]
-    offset_slots = round(first_beat / period_seconds * SUBDIVISIONS_PER_BEAT)
-    events: list[FingeringEvent] = []
-    dropped_pitches: list[int] = []
-
-    for raw_note in sorted(notes, key=lambda item: item.start_seconds):
-        if not generate_candidates(raw_note.pitch, strings=strings):
-            dropped_pitches.append(raw_note.pitch)
-            continue
-        corrected_start = raw_note.start_seconds - grid.onset_delay_seconds
-        corrected_end = raw_note.end_seconds - grid.onset_delay_seconds
-        start_slot = max(
-            0,
-            round((corrected_start - first_beat) / period_seconds * SUBDIVISIONS_PER_BEAT)
-            + offset_slots,
-        )
-        end_slot = max(
-            start_slot + 1,
-            round((corrected_end - first_beat) / period_seconds * SUBDIVISIONS_PER_BEAT)
-            + offset_slots,
-        )
-        events.append(FingeringEvent(raw_note.pitch, start_slot, end_slot))
-
-    if fingering_profile is None:
-        fingerings = [_choose_fingering(event.pitch, strings) for event in events]
-    else:
-        optimized = optimize_fingering(events, fingering_profile, strings=strings)
-        fingerings = [(choice.string, choice.fret) for choice in optimized]
-    result = [
-        _TabNote(event.pitch, event.start_slot, event.end_slot, string, fret)
-        for event, (string, fret) in zip(events, fingerings, strict=True)
-    ]
-    result = _assign_distinct_chord_strings(result, strings)
-
-    # Prevent independently rounded offsets from extending through the next
-    # attack while retaining every note in an explicit simultaneous chord.
-    cleaned: list[_TabNote] = []
-    onset_groups = [
-        list(group)
-        for _, group in groupby(result, key=lambda tab_note: tab_note.start_slot)
-    ]
-    for group_index, chord in enumerate(onset_groups):
-        next_start = (
-            onset_groups[group_index + 1][0].start_slot
-            if group_index + 1 < len(onset_groups)
-            else None
-        )
-        for tab_note in chord:
-            end_slot = (
-                min(tab_note.end_slot, next_start)
-                if next_start is not None
-                else tab_note.end_slot
-            )
-            cleaned.append(
-                _TabNote(
-                    tab_note.pitch,
-                    tab_note.start_slot,
-                    max(tab_note.start_slot + 1, end_slot),
-                    tab_note.string,
-                    tab_note.fret,
-                )
-            )
-    return cleaned, dropped_pitches
-
-
-def _assign_distinct_chord_strings(
-    notes: list[_TabNote],
-    strings: tuple[tuple[int, int], ...],
-) -> list[_TabNote]:
-    """Keep optimized fingerings when possible and resolve chord collisions."""
-    resolved: list[_TabNote] = []
-    for _, group_iterator in groupby(notes, key=lambda note: note.start_slot):
-        chord = list(group_iterator)
-        if len(chord) == 1 or len({note.string for note in chord}) == len(chord):
-            resolved.extend(chord)
-            continue
-        if len(chord) > len(strings):
-            raise ValueError(
-                f"cannot place {len(chord)} simultaneous notes on {len(strings)} strings"
-            )
-
-        preferred = [FingeringCandidate(note.string, note.fret) for note in chord]
-        candidates = [
-            generate_candidates(note.pitch, strings=strings)
-            for note in chord
-        ]
-        combinations = (
-            combination
-            for combination in product(*candidates)
-            if len({choice.string for choice in combination}) == len(combination)
-        )
-        try:
-            selected = min(
-                combinations,
-                key=lambda combination: _chord_fingering_cost(combination, preferred),
-            )
-        except ValueError as error:
-            pitches = ", ".join(str(note.pitch) for note in chord)
-            raise ValueError(
-                f"cannot place simultaneous MIDI pitches {pitches} on distinct strings"
-            ) from error
-        resolved.extend(
-            _TabNote(
-                note.pitch,
-                note.start_slot,
-                note.end_slot,
-                choice.string,
-                choice.fret,
-            )
-            for note, choice in zip(chord, selected, strict=True)
-        )
-    return resolved
-
-
-def _chord_fingering_cost(
-    choices: tuple[FingeringCandidate, ...],
-    preferred: list[FingeringCandidate],
-) -> tuple[int, int, int]:
-    changed = sum(choice != original for choice, original in zip(choices, preferred, strict=True))
-    displacement = sum(
-        abs(choice.fret - original.fret) + abs(choice.string - original.string)
-        for choice, original in zip(choices, preferred, strict=True)
+) -> tuple[list[ResolvedTabNote], list[int]]:
+    timeline = build_fingering_timeline(
+        notes,
+        grid,
+        fingering_profile,
+        strings=strings,
     )
-    return changed, displacement, sum(choice.fret for choice in choices)
-
-
-def _choose_fingering(
-    pitch: int, strings: tuple[tuple[int, int], ...] = BEADG_STRINGS
-) -> tuple[int, int]:
-    candidates = [
-        (candidate.fret, candidate.string)
-        for candidate in generate_candidates(pitch, strings=strings)
-    ]
-    if not candidates:
-        tuning_name = "BEADG" if len(strings) == 5 else "EADG"
-        raise ValueError(f"MIDI pitch {pitch} is outside {tuning_name} range")
-    fret, string = min(candidates)
-    return string, fret
+    return list(timeline.notes), list(timeline.dropped_pitches)
 
 
 def _new_song(
@@ -354,7 +211,7 @@ def _append_span(
     measure: Measure,
     start_slot: int,
     end_slot: int,
-    notes: tuple[_TabNote, ...],
+    notes: tuple[ResolvedTabNote, ...],
 ) -> None:
     voice = measure.voices[0]
     cursor = start_slot

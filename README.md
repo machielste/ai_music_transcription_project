@@ -135,7 +135,43 @@ The **Fingering style** selector applies an optional phrase-level optimizer afte
 rhythm quantization. Choose **Legacy lowest fret** to bypass that stage and retain
 the original per-note behavior.
 
+After processing completes, choose **Open fingering comparison** to launch the
+synchronized perspective-highway view for the retained transcription. Compare
+the strategies in the browser, return to the desktop window, select the desired
+style from **Selected fingering style**, and choose **Apply selected fingering**.
+This rewrites the GP5 from the retained notes and rhythm grid without running
+MuScriptor or rhythm detection again.
+
 The **Use 5-string bass** toggle is off by default. It selects BEADG when enabled
 and four-string EADG when disabled. In four-string mode, the optimizer cannot
 choose the B string; notes below E1 are dropped and listed in the completion
 warnings.
+
+## Fingering strategy debugger
+
+Compare every fingering profile in synchronized perspective note highways:
+
+```powershell
+uv run bass-transcriber debug fingerings outputs\song.notes.json `
+  --rhythm outputs\song.rhythm.json `
+  --audio path\to\song.wav
+```
+
+The command starts a loopback-only web server, opens the default browser, and
+continues until `Ctrl+C` is pressed. All strategy panels share the source-audio
+clock. The browser mixes the recording with a lightweight synthesized version
+of the quantized bass notes; both levels can be adjusted independently. White
+note outlines mark placements that differ from the first profile in the view.
+
+Use `--strings 4` for EADG, `--no-open` to suppress automatic browser launch,
+or select a subset and comparison order explicitly:
+
+```powershell
+uv run bass-transcriber debug fingerings outputs\song.notes.json `
+  --rhythm outputs\song.rhythm.json `
+  --profiles balanced slap_funk legacy
+```
+
+The source audio defaults to the path recorded in the notes JSON. Pass `--audio`
+when that source has moved or when the sidecar was produced by the temporary
+end-to-end pipeline.

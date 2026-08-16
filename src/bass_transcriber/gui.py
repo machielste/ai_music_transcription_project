@@ -5,14 +5,20 @@ from __future__ import annotations
 import queue
 import threading
 import tkinter as tk
+from dataclasses import replace
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+from bass_transcriber.fingering_debug import (
+    FingeringDebugSession,
+    start_fingering_debugger,
+)
 from bass_transcriber.pipeline import (
     ProcessingResult,
     debug_path_for,
     output_path_for,
     process_song,
+    rewrite_gp5_fingering,
 )
 
 _AUDIO_TYPES = [
@@ -36,7 +42,7 @@ class TranscriberApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("Bass Transcriber")
-        self.root.minsize(680, 390)
+        self.root.minsize(780, 430)
 
         self.source = tk.StringVar()
         self.destination = tk.StringVar(value=str((Path.cwd() / "outputs").resolve()))
@@ -48,8 +54,11 @@ class TranscriberApp:
         self.status = tk.StringVar(value="Select a music file and output folder.")
         self.progress = tk.DoubleVar(value=0.0)
         self.events: queue.Queue[tuple[str, object]] = queue.Queue()
+        self.latest_result: ProcessingResult | None = None
+        self.debug_session: FingeringDebugSession | None = None
 
         self._build_layout()
+        self.root.protocol("WM_DELETE_WINDOW", self._close)
         self.root.after(100, self._poll_events)
 
     def _build_layout(self) -> None:
@@ -105,7 +114,9 @@ class TranscriberApp:
             variable=self.five_string,
         ).grid(row=6, column=0, columnspan=3, sticky="w", pady=(4, 8))
 
-        ttk.Label(frame, text="Fingering style").grid(row=7, column=0, sticky="w", pady=6)
+        ttk.Label(frame, text="Selected fingering style").grid(
+            row=7, column=0, sticky="w", pady=6
+        )
         ttk.Combobox(
             frame,
             textvariable=self.fingering_style,
@@ -129,7 +140,25 @@ class TranscriberApp:
             text="Process to GP5",
             command=self._start_processing,
         )
-        self.process_button.grid(row=10, column=0, columnspan=3, pady=(14, 0))
+        self.process_button.grid(row=10, column=0, sticky="ew", padx=(0, 5), pady=(14, 0))
+
+        self.compare_button = ttk.Button(
+            frame,
+            text="Open fingering comparison",
+            command=self._open_fingering_comparison,
+            state="disabled",
+        )
+        self.compare_button.grid(row=10, column=1, sticky="ew", padx=5, pady=(14, 0))
+
+        self.apply_fingering_button = ttk.Button(
+            frame,
+            text="Apply selected fingering",
+            command=self._apply_selected_fingering,
+            state="disabled",
+        )
+        self.apply_fingering_button.grid(
+            row=10, column=2, sticky="ew", padx=(5, 0), pady=(14, 0)
+        )
 
     def _choose_source(self) -> None:
         selected = filedialog.askopenfilename(title="Select music file", filetypes=_AUDIO_TYPES)
@@ -174,7 +203,11 @@ class TranscriberApp:
             ):
                 return
 
+        self._stop_debugger()
+        self.latest_result = None
         self.process_button.state(["disabled"])
+        self.compare_button.state(["disabled"])
+        self.apply_fingering_button.state(["disabled"])
         self.progress.set(0.0)
         self.status.set("Starting…")
         worker = threading.Thread(
@@ -191,6 +224,85 @@ class TranscriberApp:
             daemon=True,
         )
         worker.start()
+
+    def _open_fingering_comparison(self) -> None:
+        result = self.latest_result
+        if result is None or result.source is None or result.rhythm is None:
+            messagebox.showerror(
+                "No completed transcription",
+                "Process a song before opening the fingering comparison.",
+            )
+            return
+        if self.debug_session is not None:
+            self.debug_session.open_browser()
+            self.status.set(f"Fingering comparison: {self.debug_session.url}")
+            return
+        try:
+            self.debug_session = start_fingering_debugger(
+                result.source,
+                result.notes,
+                result.rhythm,
+                five_string=result.five_string,
+                open_browser=True,
+            )
+        except (OSError, ValueError) as error:
+            messagebox.showerror("Could not open comparison", str(error))
+            return
+        self.status.set(f"Fingering comparison: {self.debug_session.url}")
+
+    def _apply_selected_fingering(self) -> None:
+        result = self.latest_result
+        if result is None:
+            messagebox.showerror(
+                "No completed transcription",
+                "Process a song before applying a fingering style.",
+            )
+            return
+        style_label = self.fingering_style.get()
+        if not messagebox.askyesno(
+            "Apply fingering style?",
+            f"Replace {result.output.name} using {style_label}?",
+        ):
+            return
+        profile = _FINGERING_OPTIONS[style_label]
+        self.process_button.state(["disabled"])
+        self.apply_fingering_button.state(["disabled"])
+        self.status.set(f"Applying {style_label}…")
+        worker = threading.Thread(
+            target=self._run_fingering_export,
+            args=(result, profile, style_label),
+            daemon=True,
+        )
+        worker.start()
+
+    def _run_fingering_export(
+        self,
+        result: ProcessingResult,
+        profile: str | None,
+        style_label: str,
+    ) -> None:
+        try:
+            export_result = rewrite_gp5_fingering(result, profile)
+        except Exception as error:  # The UI must report backend failures cleanly.
+            self.events.put(("fingering_error", str(error)))
+        else:
+            updated = replace(result, fingering_profile=profile)
+            self.events.put(
+                (
+                    "fingering_done",
+                    (updated, style_label, export_result.exported_note_count),
+                )
+            )
+
+    def _stop_debugger(self) -> None:
+        if self.debug_session is None:
+            return
+        self.debug_session.stop()
+        self.debug_session = None
+
+    def _close(self) -> None:
+        self._stop_debugger()
+        self.root.destroy()
 
     def _run_pipeline(
         self,
@@ -245,6 +357,9 @@ class TranscriberApp:
                     if not isinstance(result, ProcessingResult):
                         raise TypeError("unexpected processing result")
                     self.process_button.state(["!disabled"])
+                    self.compare_button.state(["!disabled"])
+                    self.apply_fingering_button.state(["!disabled"])
+                    self.latest_result = result
                     self.progress.set(100.0)
                     self.status.set(f"Finished: {result.output}")
                     messagebox.showinfo(
@@ -267,6 +382,30 @@ class TranscriberApp:
                             else ""
                         ),
                     )
+                elif event == "fingering_done":
+                    if not (
+                        isinstance(payload, tuple)
+                        and len(payload) == 3
+                        and isinstance(payload[0], ProcessingResult)
+                        and isinstance(payload[1], str)
+                        and isinstance(payload[2], int)
+                    ):
+                        raise TypeError("unexpected fingering export result")
+                    result, style_label, note_count = payload
+                    self.latest_result = result
+                    self.process_button.state(["!disabled"])
+                    self.apply_fingering_button.state(["!disabled"])
+                    self.status.set(f"Applied {style_label}: {result.output}")
+                    messagebox.showinfo(
+                        "Fingering applied",
+                        f"Updated {result.output.name} using {style_label}.\n"
+                        f"Exported {note_count} notes.",
+                    )
+                elif event == "fingering_error":
+                    self.process_button.state(["!disabled"])
+                    self.apply_fingering_button.state(["!disabled"])
+                    self.status.set(f"Could not apply fingering: {payload}")
+                    messagebox.showerror("Fingering export failed", str(payload))
                 elif event == "error":
                     self.process_button.state(["!disabled"])
                     self.status.set(f"Failed: {payload}")

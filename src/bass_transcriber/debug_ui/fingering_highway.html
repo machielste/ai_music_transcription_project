@@ -1,0 +1,682 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bass fingering debugger</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --background: #0b0d10;
+      --surface: #14181d;
+      --surface-raised: #1b2027;
+      --border: #303741;
+      --text: #f3f5f7;
+      --muted: #9da7b3;
+      --accent: #d8ff48;
+      --accent-text: #101400;
+      --g-string: #5cc8ff;
+      --d-string: #ff9e57;
+      --a-string: #65d892;
+      --e-string: #ef7fbd;
+      --b-string: #9a83ed;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-width: 320px;
+      background: var(--background);
+      color: var(--text);
+    }
+    button, input { font: inherit; }
+    button:focus-visible, input:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    .app {
+      width: min(1440px, 100%);
+      margin: 0 auto;
+      padding: 18px;
+    }
+    .topbar {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 14px;
+    }
+    h1 {
+      margin: 0 0 3px;
+      font-size: clamp(20px, 3vw, 30px);
+      font-weight: 650;
+      letter-spacing: -0.02em;
+    }
+    .subtitle, .status, .metric, .active-choice { color: var(--muted); }
+    .subtitle { margin: 0; }
+    .status {
+      min-height: 1.4em;
+      text-align: right;
+      font-size: 13px;
+    }
+    .transport {
+      display: grid;
+      grid-template-columns: auto minmax(240px, 1fr) minmax(150px, 220px) minmax(150px, 220px);
+      gap: 14px;
+      align-items: center;
+      margin-bottom: 12px;
+      padding: 12px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+    }
+    .button-row { display: flex; gap: 8px; }
+    .button {
+      min-height: 38px;
+      padding: 0 14px;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      background: var(--surface-raised);
+      color: var(--text);
+      cursor: pointer;
+    }
+    .button.primary {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: var(--accent-text);
+      font-weight: 650;
+    }
+    .control { display: grid; gap: 5px; min-width: 0; }
+    .control-label {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .control-label output {
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
+    }
+    input[type="range"] { width: 100%; accent-color: var(--accent); }
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 11px;
+      min-height: 26px;
+      margin-bottom: 10px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .legend-item { display: inline-flex; align-items: center; gap: 5px; }
+    .swatch { width: 15px; height: 5px; border-radius: 2px; }
+    .difference-key {
+      width: 15px;
+      height: 10px;
+      border: 2px solid var(--text);
+      border-radius: 3px;
+    }
+    .highway-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+    .strategy {
+      min-width: 0;
+      padding: 10px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+    }
+    .strategy-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+    .strategy h2 { margin: 0 0 3px; font-size: 17px; font-weight: 650; }
+    .metrics { display: flex; flex-wrap: wrap; gap: 9px; font-size: 11px; }
+    .active-choice {
+      flex: 0 0 auto;
+      padding-top: 2px;
+      text-align: right;
+      font-size: 12px;
+      font-variant-numeric: tabular-nums;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      aspect-ratio: 16 / 8.5;
+      border-radius: 7px;
+      background: #0f1216;
+    }
+    .error {
+      padding: 14px;
+      border: 1px solid #d65a5a;
+      border-radius: 8px;
+      background: #2a1518;
+      color: #ffb8b8;
+    }
+    @media (max-width: 900px) {
+      .transport { grid-template-columns: auto 1fr; }
+      .highway-grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 540px) {
+      .app { padding: 10px; }
+      .topbar { display: block; }
+      .status { margin-top: 7px; text-align: left; }
+      .transport { grid-template-columns: 1fr; }
+      .button-row .button { flex: 1; }
+      .strategy-header { display: block; }
+      .active-choice { margin-top: 5px; text-align: left; }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header class="topbar">
+      <div>
+        <h1>Fingering strategy debugger</h1>
+        <p class="subtitle" id="source-label">Loading comparison…</p>
+      </div>
+      <div class="status" id="status" role="status">Loading source audio…</div>
+    </header>
+
+    <section class="transport" aria-label="Playback controls">
+      <div class="button-row">
+        <button class="button primary" id="play" type="button" disabled>Play</button>
+        <button class="button" id="restart" type="button" disabled>Restart</button>
+      </div>
+      <label class="control">
+        <span class="control-label"><span>Timeline</span><output id="time-output">0:00.00</output></span>
+        <input id="timeline" type="range" min="0" max="1" step="0.01" value="0" disabled>
+      </label>
+      <label class="control">
+        <span class="control-label"><span>Source track</span><output id="track-output">70%</output></span>
+        <input id="track-volume" type="range" min="0" max="1" step="0.01" value="0.7">
+      </label>
+      <label class="control">
+        <span class="control-label"><span>MIDI bass</span><output id="midi-output">75%</output></span>
+        <input id="midi-volume" type="range" min="0" max="1" step="0.01" value="0.75">
+      </label>
+    </section>
+
+    <div class="legend" id="legend"></div>
+    <section class="highway-grid" id="highway-grid" aria-label="Fingering comparisons"></section>
+  </main>
+
+  <script>
+    'use strict';
+
+    const LOOKAHEAD_SECONDS = 4.5;
+    const STRING_COLORS = ['#5cc8ff', '#ff9e57', '#65d892', '#ef7fbd', '#9a83ed'];
+    const dom = {
+      sourceLabel: document.getElementById('source-label'),
+      status: document.getElementById('status'),
+      play: document.getElementById('play'),
+      restart: document.getElementById('restart'),
+      timeline: document.getElementById('timeline'),
+      timeOutput: document.getElementById('time-output'),
+      trackVolume: document.getElementById('track-volume'),
+      midiVolume: document.getElementById('midi-volume'),
+      trackOutput: document.getElementById('track-output'),
+      midiOutput: document.getElementById('midi-output'),
+      legend: document.getElementById('legend'),
+      grid: document.getElementById('highway-grid')
+    };
+
+    class PlaybackEngine {
+      constructor(notes) {
+        this.notes = notes;
+        this.context = null;
+        this.audioBuffer = null;
+        this.source = null;
+        this.trackGain = null;
+        this.synthGain = null;
+        this.synthFilter = null;
+        this.scheduledOscillators = [];
+        this.anchorContextTime = 0;
+        this.anchorSongTime = 0;
+        this.pausedAt = 0;
+        this.playing = false;
+        this.duration = 0;
+      }
+
+      async load() {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContextClass) throw new Error('This browser does not support Web Audio.');
+        this.context = new AudioContextClass();
+        this.trackGain = this.context.createGain();
+        this.synthGain = this.context.createGain();
+        this.synthFilter = this.context.createBiquadFilter();
+        this.synthFilter.type = 'lowpass';
+        this.synthFilter.frequency.value = 1500;
+        this.synthFilter.Q.value = 0.7;
+        this.trackGain.connect(this.context.destination);
+        this.synthFilter.connect(this.synthGain);
+        this.synthGain.connect(this.context.destination);
+        this.setTrackVolume(Number(dom.trackVolume.value));
+        this.setMidiVolume(Number(dom.midiVolume.value));
+
+        const response = await fetch('/audio');
+        if (!response.ok) throw new Error('Could not load the source audio.');
+        const encoded = await response.arrayBuffer();
+        try {
+          this.audioBuffer = await this.context.decodeAudioData(encoded);
+          this.duration = this.audioBuffer.duration;
+        } catch (error) {
+          this.duration = Math.max(...this.notes.map(note => note.end_seconds), 0);
+          throw new Error('The browser could not decode this audio format. Convert it to WAV or MP3.');
+        }
+      }
+
+      get position() {
+        if (!this.playing || !this.context) return this.pausedAt;
+        if (this.context.currentTime < this.anchorContextTime) return this.anchorSongTime;
+        return Math.min(
+          this.duration,
+          this.anchorSongTime + this.context.currentTime - this.anchorContextTime
+        );
+      }
+
+      async play() {
+        if (!this.context || !this.audioBuffer || this.playing) return;
+        await this.context.resume();
+        if (this.pausedAt >= this.duration) this.pausedAt = 0;
+        const when = this.context.currentTime + 0.04;
+        const offset = this.pausedAt;
+        const source = this.context.createBufferSource();
+        source.buffer = this.audioBuffer;
+        source.connect(this.trackGain);
+        source.start(when, offset);
+        source.onended = () => {
+          if (this.source === source && this.position >= this.duration - 0.03) {
+            this.pausedAt = this.duration;
+            this.playing = false;
+            updatePlaybackButton();
+          }
+        };
+        this.source = source;
+        this.anchorContextTime = when;
+        this.anchorSongTime = offset;
+        this.playing = true;
+        this.scheduleSynth(when, offset);
+      }
+
+      pause() {
+        if (!this.playing) return;
+        this.pausedAt = this.position;
+        this.playing = false;
+        this.stopScheduledNodes();
+      }
+
+      async seek(seconds) {
+        const resume = this.playing;
+        if (this.playing) this.pause();
+        this.pausedAt = Math.max(0, Math.min(this.duration, seconds));
+        if (resume) await this.play();
+      }
+
+      setTrackVolume(value) {
+        if (this.trackGain) this.trackGain.gain.value = value;
+      }
+
+      setMidiVolume(value) {
+        if (this.synthGain) this.synthGain.gain.value = value;
+      }
+
+      stopScheduledNodes() {
+        if (this.source) {
+          this.source.onended = null;
+          try { this.source.stop(); } catch (_) { /* already stopped */ }
+          this.source.disconnect();
+          this.source = null;
+        }
+        for (const oscillator of this.scheduledOscillators) {
+          try { oscillator.stop(); } catch (_) { /* already stopped */ }
+          oscillator.disconnect();
+        }
+        this.scheduledOscillators = [];
+      }
+
+      scheduleSynth(anchorTime, offset) {
+        this.scheduledOscillators = [];
+        for (const note of this.notes) {
+          if (note.end_seconds <= offset) continue;
+          const startAt = anchorTime + Math.max(0, note.start_seconds - offset);
+          const endAt = anchorTime + Math.max(0.025, note.end_seconds - offset);
+          const frequency = 440 * Math.pow(2, (note.pitch - 69) / 12);
+          const oscillator = this.context.createOscillator();
+          const envelope = this.context.createGain();
+          oscillator.type = 'sawtooth';
+          oscillator.frequency.value = frequency;
+          envelope.gain.setValueAtTime(0.0001, startAt);
+          envelope.gain.exponentialRampToValueAtTime(0.12, startAt + 0.009);
+          envelope.gain.setValueAtTime(0.12, Math.max(startAt + 0.01, endAt - 0.045));
+          envelope.gain.exponentialRampToValueAtTime(0.0001, endAt);
+          oscillator.connect(envelope);
+          envelope.connect(this.synthFilter);
+          oscillator.start(startAt);
+          oscillator.stop(endAt + 0.01);
+          this.scheduledOscillators.push(oscillator);
+        }
+      }
+    }
+
+    let comparison = null;
+    let engine = null;
+    let panels = [];
+
+    function formatTime(seconds) {
+      const safe = Math.max(0, seconds || 0);
+      const minutes = Math.floor(safe / 60);
+      const remainder = safe - minutes * 60;
+      return `${minutes}:${remainder.toFixed(2).padStart(5, '0')}`;
+    }
+
+    function setupLegend() {
+      dom.legend.replaceChildren();
+      comparison.strings.forEach((string, index) => {
+        const item = document.createElement('span');
+        item.className = 'legend-item';
+        const swatch = document.createElement('span');
+        swatch.className = 'swatch';
+        swatch.style.background = STRING_COLORS[index];
+        item.append(swatch, document.createTextNode(`${string.name} string`));
+        dom.legend.appendChild(item);
+      });
+      const difference = document.createElement('span');
+      difference.className = 'legend-item';
+      const outline = document.createElement('span');
+      outline.className = 'difference-key';
+      difference.append(outline, document.createTextNode(`differs from ${comparison.strategies[0].label}`));
+      dom.legend.appendChild(difference);
+    }
+
+    function setupPanels() {
+      dom.grid.replaceChildren();
+      panels = comparison.strategies.map((strategy, strategyIndex) => {
+        const section = document.createElement('article');
+        section.className = 'strategy';
+        const header = document.createElement('header');
+        header.className = 'strategy-header';
+        const description = document.createElement('div');
+        const title = document.createElement('h2');
+        title.textContent = strategy.label;
+        const metrics = document.createElement('div');
+        metrics.className = 'metrics';
+        const metricValues = [
+          `fret travel ${strategy.metrics.fret_travel}`,
+          `string changes ${strategy.metrics.string_changes}`,
+          `open ${strategy.metrics.open_strings}`
+        ];
+        metricValues.forEach(value => {
+          const span = document.createElement('span');
+          span.className = 'metric';
+          span.textContent = value;
+          metrics.appendChild(span);
+        });
+        description.append(title, metrics);
+        const active = document.createElement('div');
+        active.className = 'active-choice';
+        active.textContent = 'Waiting';
+        header.append(description, active);
+        const canvas = document.createElement('canvas');
+        canvas.setAttribute('role', 'img');
+        canvas.setAttribute('aria-label', `${strategy.label} perspective note highway`);
+        section.append(header, canvas);
+        dom.grid.appendChild(section);
+        return { strategy, strategyIndex, canvas, active };
+      });
+    }
+
+    function project(width, height, stringIndex, deltaSeconds) {
+      const nearY = height - 30;
+      const farY = 24;
+      const normalized = Math.max(0, Math.min(1, deltaSeconds / LOOKAHEAD_SECONDS));
+      const depth = Math.sqrt(normalized);
+      const nearLeft = 20;
+      const nearRight = width - 20;
+      const farLeft = width * 0.35;
+      const farRight = width * 0.65;
+      const left = nearLeft + depth * (farLeft - nearLeft);
+      const right = nearRight + depth * (farRight - nearRight);
+      const laneWidth = (right - left) / comparison.strings.length;
+      return {
+        x: left + laneWidth * (stringIndex + 0.5),
+        y: nearY - depth * (nearY - farY),
+        left,
+        right,
+        laneWidth
+      };
+    }
+
+    function roundedRect(context, x, y, width, height, radius) {
+      const r = Math.min(radius, width / 2, height / 2);
+      context.beginPath();
+      context.moveTo(x + r, y);
+      context.arcTo(x + width, y, x + width, y + height, r);
+      context.arcTo(x + width, y + height, x, y + height, r);
+      context.arcTo(x, y + height, x, y, r);
+      context.arcTo(x, y, x + width, y, r);
+      context.closePath();
+    }
+
+    function drawPanel(panel, currentTime) {
+      const canvas = panel.canvas;
+      const bounds = canvas.getBoundingClientRect();
+      const width = Math.max(280, Math.round(bounds.width));
+      const height = Math.max(150, Math.round(bounds.height));
+      const ratio = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+      if (canvas.width !== Math.round(width * ratio) || canvas.height !== Math.round(height * ratio)) {
+        canvas.width = Math.round(width * ratio);
+        canvas.height = Math.round(height * ratio);
+      }
+      const context = canvas.getContext('2d');
+      context.setTransform(ratio, 0, 0, ratio, 0, 0);
+      context.clearRect(0, 0, width, height);
+      context.fillStyle = '#0f1216';
+      context.fillRect(0, 0, width, height);
+
+      const nearY = height - 30;
+      const farY = 24;
+      const nearLeft = 20;
+      const nearRight = width - 20;
+      const farLeft = width * 0.35;
+      const farRight = width * 0.65;
+      const stringCount = comparison.strings.length;
+
+      context.fillStyle = '#1b2026';
+      context.beginPath();
+      context.moveTo(farLeft, farY);
+      context.lineTo(farRight, farY);
+      context.lineTo(nearRight, nearY);
+      context.lineTo(nearLeft, nearY);
+      context.closePath();
+      context.fill();
+
+      context.strokeStyle = '#343c46';
+      context.lineWidth = 1;
+      for (let index = 0; index < stringCount; index++) {
+        const farX = farLeft + ((index + 0.5) / stringCount) * (farRight - farLeft);
+        const nearX = nearLeft + ((index + 0.5) / stringCount) * (nearRight - nearLeft);
+        context.beginPath();
+        context.moveTo(farX, farY);
+        context.lineTo(nearX, nearY);
+        context.stroke();
+      }
+
+      const beatSeconds = 60 / comparison.bpm;
+      const firstBeat = Math.ceil(currentTime / beatSeconds) * beatSeconds;
+      for (let beat = firstBeat; beat <= currentTime + LOOKAHEAD_SECONDS; beat += beatSeconds) {
+        const geometry = project(width, height, 0, beat - currentTime);
+        context.globalAlpha = 0.5;
+        context.beginPath();
+        context.moveTo(geometry.left, geometry.y);
+        context.lineTo(geometry.right, geometry.y);
+        context.stroke();
+        context.globalAlpha = 1;
+      }
+
+      context.strokeStyle = '#f3f5f7';
+      context.lineWidth = 3;
+      context.beginPath();
+      context.moveTo(nearLeft, nearY);
+      context.lineTo(nearRight, nearY);
+      context.stroke();
+
+      const visible = [];
+      for (let index = 0; index < panel.strategy.notes.length; index++) {
+        const note = panel.strategy.notes[index];
+        if (note.end_seconds < currentTime - 0.04) continue;
+        if (note.start_seconds > currentTime + LOOKAHEAD_SECONDS) break;
+        const delta = Math.max(0, note.start_seconds - currentTime);
+        visible.push({ index, note, geometry: project(width, height, note.string - 1, delta) });
+      }
+
+      if (visible.length > 1) {
+        context.strokeStyle = '#6f7884';
+        context.globalAlpha = 0.45;
+        context.lineWidth = 1.5;
+        context.beginPath();
+        context.moveTo(visible[0].geometry.x, visible[0].geometry.y);
+        for (const item of visible.slice(1)) context.lineTo(item.geometry.x, item.geometry.y);
+        context.stroke();
+        context.globalAlpha = 1;
+      }
+
+      context.font = '650 12px system-ui, sans-serif';
+      context.textAlign = 'center';
+      context.textBaseline = 'middle';
+      let activeNote = null;
+      for (const item of visible.reverse()) {
+        const { index, note, geometry } = item;
+        const tail = project(
+          width,
+          height,
+          note.string - 1,
+          Math.max(0, note.end_seconds - currentTime)
+        );
+        const noteWidth = Math.max(18, geometry.laneWidth * 0.72);
+        const noteHeight = Math.max(11, 17 - Math.max(0, note.start_seconds - currentTime));
+        const color = STRING_COLORS[note.string - 1];
+        context.strokeStyle = color;
+        context.globalAlpha = 0.42;
+        context.lineWidth = Math.max(3, noteWidth * 0.3);
+        context.beginPath();
+        context.moveTo(tail.x, tail.y);
+        context.lineTo(geometry.x, geometry.y);
+        context.stroke();
+        context.globalAlpha = 1;
+
+        roundedRect(
+          context,
+          geometry.x - noteWidth / 2,
+          geometry.y - noteHeight / 2,
+          noteWidth,
+          noteHeight,
+          4
+        );
+        context.fillStyle = color;
+        context.fill();
+        const reference = comparison.strategies[0].notes[index];
+        const differs = panel.strategyIndex > 0 && reference &&
+          (reference.string !== note.string || reference.fret !== note.fret);
+        if (differs) {
+          context.strokeStyle = '#f3f5f7';
+          context.lineWidth = 2;
+          context.stroke();
+        }
+        context.fillStyle = '#090b0e';
+        context.fillText(String(note.fret), geometry.x, geometry.y + 0.5);
+        if (currentTime >= note.start_seconds && currentTime < note.end_seconds) activeNote = note;
+      }
+
+      context.font = '500 11px system-ui, sans-serif';
+      context.fillStyle = '#9da7b3';
+      context.textAlign = 'left';
+      context.fillText(`+${LOOKAHEAD_SECONDS.toFixed(1)}s`, farLeft - 4, farY + 9);
+      context.textAlign = 'center';
+      comparison.strings.forEach((string, index) => {
+        const x = nearLeft + ((index + 0.5) / stringCount) * (nearRight - nearLeft);
+        context.fillStyle = STRING_COLORS[index];
+        context.fillText(string.name, x, height - 11);
+      });
+
+      panel.active.textContent = activeNote
+        ? `${comparison.strings[activeNote.string - 1].name} string · fret ${activeNote.fret}`
+        : 'Approaching';
+    }
+
+    function updatePlaybackButton() {
+      if (!engine) return;
+      dom.play.textContent = engine.playing ? 'Pause' : 'Play';
+    }
+
+    async function togglePlayback() {
+      if (!engine) return;
+      if (engine.playing) engine.pause(); else await engine.play();
+      updatePlaybackButton();
+    }
+
+    function renderLoop() {
+      if (comparison && engine) {
+        const currentTime = engine.position;
+        dom.timeline.value = String(currentTime);
+        dom.timeOutput.value = formatTime(currentTime);
+        panels.forEach(panel => drawPanel(panel, currentTime));
+      }
+      requestAnimationFrame(renderLoop);
+    }
+
+    async function initialize() {
+      try {
+        const response = await fetch('/comparison.json');
+        if (!response.ok) throw new Error('Could not load comparison data.');
+        comparison = await response.json();
+        dom.sourceLabel.textContent = `${comparison.source_name} · ${comparison.bpm.toFixed(2)} BPM`;
+        setupLegend();
+        setupPanels();
+        engine = new PlaybackEngine(comparison.playback_notes);
+        await engine.load();
+        engine.duration = Math.max(engine.duration, comparison.duration_seconds);
+        dom.timeline.max = String(engine.duration);
+        dom.timeline.disabled = false;
+        dom.play.disabled = false;
+        dom.restart.disabled = false;
+        dom.status.textContent = 'Ready · all strategies share one audio clock';
+      } catch (error) {
+        dom.status.textContent = error instanceof Error ? error.message : String(error);
+        dom.status.classList.add('error');
+      }
+    }
+
+    dom.play.addEventListener('click', togglePlayback);
+    dom.restart.addEventListener('click', async () => {
+      if (!engine) return;
+      await engine.seek(0);
+      updatePlaybackButton();
+    });
+    dom.timeline.addEventListener('input', async () => {
+      if (!engine) return;
+      await engine.seek(Number(dom.timeline.value));
+      updatePlaybackButton();
+    });
+    dom.trackVolume.addEventListener('input', () => {
+      const value = Number(dom.trackVolume.value);
+      dom.trackOutput.value = `${Math.round(value * 100)}%`;
+      if (engine) engine.setTrackVolume(value);
+    });
+    dom.midiVolume.addEventListener('input', () => {
+      const value = Number(dom.midiVolume.value);
+      dom.midiOutput.value = `${Math.round(value * 100)}%`;
+      if (engine) engine.setMidiVolume(value);
+    });
+
+    initialize();
+    renderLoop();
+  </script>
+</body>
+</html>

@@ -6,7 +6,12 @@ import pytest
 import bass_transcriber.pipeline as pipeline
 from bass_transcriber.export.gp5 import GP5ExportResult
 from bass_transcriber.models import BassNote, RhythmGrid
-from bass_transcriber.pipeline import debug_path_for, output_path_for
+from bass_transcriber.pipeline import (
+    ProcessingResult,
+    debug_path_for,
+    output_path_for,
+    rewrite_gp5_fingering,
+)
 
 
 def test_output_path_uses_source_stem() -> None:
@@ -68,6 +73,11 @@ def test_process_song_runs_pipeline_and_copies_gp5(
     assert result.note_count == 1
     assert result.bpm == pytest.approx(117.454)
     assert result.debug_log == destination / "source.bass.debug.json"
+    assert result.source == source
+    assert result.notes == tuple(notes)
+    assert result.rhythm == rhythm
+    assert result.five_string is True
+    assert result.fingering_profile == "balanced"
     debug_document = json.loads(result.debug_log.read_text(encoding="utf-8"))
     assert debug_document["schema_version"] == 1
     assert debug_document["document_type"] == "bass_transcriber_debug_run"
@@ -310,3 +320,61 @@ def test_process_song_retains_structured_debug_log_on_failure(
         stage for stage in document["stages"] if stage["name"] == "transcription"
     )
     assert transcription_stage["status"] == "failed"
+
+
+def test_completed_result_can_be_reexported_with_another_fingering(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.wav"
+    source.write_bytes(b"audio")
+    output = tmp_path / "source.bass.gp5"
+    output.write_bytes(b"old gp5")
+    notes = (BassNote(28, 0.0, 0.25, "electric_bass"),)
+    rhythm = RhythmGrid(
+        detector="test",
+        bpm=120.0,
+        beats_per_bar=4,
+        first_downbeat_seconds=0.0,
+        beat_times_seconds=(0.0, 0.5),
+        onset_delay_seconds=0.0,
+    )
+    result = ProcessingResult(
+        output=output,
+        note_count=1,
+        bpm=120.0,
+        debug_log=tmp_path / "source.bass.debug.json",
+        source=source,
+        notes=notes,
+        rhythm=rhythm,
+        five_string=False,
+    )
+    received: dict[str, object] = {}
+
+    def write_gp5(
+        temporary_output: Path,
+        exported_notes: list[BassNote],
+        exported_rhythm: RhythmGrid,
+        **kwargs: object,
+    ) -> GP5ExportResult:
+        received.update(
+            output=temporary_output,
+            notes=exported_notes,
+            rhythm=exported_rhythm,
+            kwargs=kwargs,
+        )
+        temporary_output.write_bytes(b"new gp5")
+        return GP5ExportResult(1, ())
+
+    monkeypatch.setattr(pipeline, "write_gp5", write_gp5)
+
+    export_result = rewrite_gp5_fingering(result, "compact")
+
+    assert export_result.exported_note_count == 1
+    assert output.read_bytes() == b"new gp5"
+    assert received["notes"] == list(notes)
+    assert received["rhythm"] == rhythm
+    assert received["kwargs"] == {
+        "title": "source - Bass",
+        "fingering_profile": "compact",
+        "five_string": False,
+    }
