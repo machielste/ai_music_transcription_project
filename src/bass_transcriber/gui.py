@@ -8,7 +8,12 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from bass_transcriber.pipeline import ProcessingResult, output_path_for, process_song
+from bass_transcriber.pipeline import (
+    ProcessingResult,
+    debug_path_for,
+    output_path_for,
+    process_song,
+)
 
 _AUDIO_TYPES = [
     ("Music files", "*.mp3 *.wav *.flac *.ogg *.m4a"),
@@ -141,6 +146,9 @@ class TranscriberApp:
         destination = Path(destination_text)
         output = output_path_for(source, destination)
         replacements = [output] if output.exists() else []
+        debug_log = debug_path_for(source, destination)
+        if debug_log.exists():
+            replacements.append(debug_log)
         source_copy = destination / source.name
         if (
             self.copy_source.get()
@@ -196,7 +204,11 @@ class TranscriberApp:
                 progress=report,
             )
         except Exception as error:  # The UI must report backend failures cleanly.
-            self.events.put(("error", str(error)))
+            debug_log = debug_path_for(source, destination)
+            detail = str(error)
+            if debug_log.is_file():
+                detail += f"\n\nMachine-readable debug log: {debug_log}"
+            self.events.put(("error", detail))
         else:
             self.events.put(("done", result))
 
@@ -229,7 +241,8 @@ class TranscriberApp:
                             else "Transcription complete"
                         ),
                         f"Created {result.output.name}\n"
-                        f"{result.note_count} notes · {result.bpm:.3f} BPM"
+                        f"{result.note_count} notes · {result.bpm:.3f} BPM\n"
+                        f"Debug log: {result.debug_log.name}"
                         + (
                             f"\nCopied {result.copied_source.name}"
                             if result.copied_source is not None

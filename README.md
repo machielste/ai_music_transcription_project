@@ -110,9 +110,14 @@ uv run bass-transcriber-gui
 
 Select a music file and destination folder, then choose **Process to GP5**. The UI
 runs the large-model automatic-instrument pipeline in the background and writes
-`<song>.bass.gp5` into the selected folder. Temporary WAV and JSON artifacts are
-removed after a successful or failed run. Enable **Also copy the original music
-file to the output folder** when you want the source audio placed beside the GP5.
+`<song>.bass.gp5` and a machine-readable `<song>.bass.debug.json` diagnostic log
+into the selected folder. The debug log is retained on both successful and failed
+runs and includes the unfiltered MuScriptor event stream, per-chunk summaries,
+warnings, stage timings, settings, environment details, filtering decisions,
+rhythm output, and export counts. Temporary WAV and intermediate JSON artifacts
+are removed after a successful or failed run. Enable **Also copy the original
+music file to the output folder** when you want the source audio placed beside the
+GP5.
 
 Enable **Force electric-bass instrument conditioning** to test MuScriptor's hard
 electric-bass constraint. It is experimental because non-bass parts may be emitted

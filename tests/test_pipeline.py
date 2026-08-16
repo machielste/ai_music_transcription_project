@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -5,11 +6,14 @@ import pytest
 import bass_transcriber.pipeline as pipeline
 from bass_transcriber.export.gp5 import GP5ExportResult
 from bass_transcriber.models import BassNote, RhythmGrid
-from bass_transcriber.pipeline import output_path_for
+from bass_transcriber.pipeline import debug_path_for, output_path_for
 
 
 def test_output_path_uses_source_stem() -> None:
     assert output_path_for(Path("music/song.mp3"), Path("exports")) == Path("exports/song.bass.gp5")
+    assert debug_path_for(Path("music/song.mp3"), Path("exports")) == Path(
+        "exports/song.bass.debug.json"
+    )
 
 
 def test_process_song_runs_pipeline_and_copies_gp5(
@@ -63,7 +67,18 @@ def test_process_song_runs_pipeline_and_copies_gp5(
     assert result.output.read_bytes() == b"gp5"
     assert result.note_count == 1
     assert result.bpm == pytest.approx(117.454)
+    assert result.debug_log == destination / "source.bass.debug.json"
+    debug_document = json.loads(result.debug_log.read_text(encoding="utf-8"))
+    assert debug_document["schema_version"] == 1
+    assert debug_document["document_type"] == "bass_transcriber_debug_run"
+    assert debug_document["status"] == "succeeded"
+    assert debug_document["source"]["sha256"]
+    assert debug_document["configuration"]["instrument_mode"] == "auto"
+    assert debug_document["export"]["exported_note_count"] == 1
+    assert debug_document["result"]["note_count"] == 1
+    assert all(stage["status"] == "succeeded" for stage in debug_document["stages"])
     assert transcription_kwargs["instrument"] is None
+    assert transcription_kwargs["trace"] is not None
     assert progress[0] == (0.01, "Preparing audio")
     assert progress[-1] == (1.0, "Finished: source.bass.gp5")
 
@@ -189,3 +204,36 @@ def test_process_song_surfaces_dropped_note_warning(
     assert result.warnings == (
         "Dropped 3 notes outside the 5-string BEADG range. MIDI pitches: 71 (2x), 72.",
     )
+
+
+def test_process_song_retains_structured_debug_log_on_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.mp3"
+    source.write_bytes(b"audio")
+    destination = tmp_path / "exports"
+
+    monkeypatch.setattr(pipeline.shutil, "which", lambda name: "ffmpeg")
+    monkeypatch.setattr(
+        pipeline,
+        "_convert_to_wav",
+        lambda ffmpeg, input_path, output_path: output_path.write_bytes(b"wav"),
+    )
+
+    def fail_transcription(*args: object, **kwargs: object) -> list[BassNote]:
+        raise RuntimeError("synthetic model failure")
+
+    monkeypatch.setattr(pipeline, "transcribe_bass", fail_transcription)
+
+    with pytest.raises(RuntimeError, match="synthetic model failure"):
+        pipeline.process_song(source, destination)
+
+    debug_log = destination / "source.bass.debug.json"
+    document = json.loads(debug_log.read_text(encoding="utf-8"))
+    assert document["status"] == "failed"
+    assert document["error"]["type"] == "RuntimeError"
+    assert document["error"]["message"] == "synthetic model failure"
+    transcription_stage = next(
+        stage for stage in document["stages"] if stage["name"] == "transcription"
+    )
+    assert transcription_stage["status"] == "failed"
