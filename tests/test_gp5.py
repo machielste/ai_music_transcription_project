@@ -96,3 +96,66 @@ def test_gp5_four_string_mode_excludes_b_string_and_drops_notes_below_e(
     assert [string.value for string in song.tracks[0].strings] == [43, 38, 33, 28]
     assert result.exported_note_count == 1
     assert result.dropped_pitches == (23,)
+
+
+def test_gp5_writes_simultaneous_octaves_as_a_tied_chord_across_measures(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "octave-chord.gp5"
+    grid = RhythmGrid(
+        detector="test",
+        bpm=120.0,
+        beats_per_bar=4,
+        first_downbeat_seconds=0.0,
+        beat_times_seconds=(0.0, 0.5),
+        onset_delay_seconds=0.0,
+    )
+    notes = [
+        BassNote(38, 0.0, 2.5, "electric_bass"),
+        BassNote(50, 0.0, 2.5, "electric_bass"),
+    ]
+
+    write_gp5(output, notes, grid, title="Octave chord", fingering_profile=None)
+    song = guitarpro.parse(str(output))
+    first_measure = song.tracks[0].measures[0]
+    second_measure = song.tracks[0].measures[1]
+    first_chord = first_measure.voices[0].beats[0]
+    tied_chord = second_measure.voices[0].beats[0]
+
+    assert sorted(note.realValue for note in first_chord.notes) == [38, 50]
+    assert {note.type.name for note in first_chord.notes} == {"normal"}
+    assert sorted(note.realValue for note in tied_chord.notes) == [38, 50]
+    assert {note.type.name for note in tied_chord.notes} == {"tie"}
+    assert len({note.string for note in first_chord.notes}) == 2
+
+
+def test_gp5_ties_only_the_longer_tone_when_chord_durations_differ(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "split-chord.gp5"
+    grid = RhythmGrid(
+        detector="test",
+        bpm=120.0,
+        beats_per_bar=4,
+        first_downbeat_seconds=0.0,
+        beat_times_seconds=(0.0, 0.5),
+        onset_delay_seconds=0.0,
+    )
+    notes = [
+        BassNote(43, 0.0, 0.5, "electric_bass"),
+        BassNote(47, 0.0, 1.0, "electric_bass"),
+    ]
+
+    write_gp5(output, notes, grid, title="Split chord", fingering_profile=None)
+    song = guitarpro.parse(str(output))
+    sounding_beats = [
+        beat
+        for beat in song.tracks[0].measures[0].voices[0].beats
+        if beat.notes
+    ]
+
+    assert sorted(note.realValue for note in sounding_beats[0].notes) == [43, 47]
+    assert len({note.string for note in sounding_beats[0].notes}) == 2
+    assert [(note.realValue, note.type.name) for note in sounding_beats[1].notes] == [
+        (47, "tie")
+    ]
