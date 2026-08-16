@@ -17,6 +17,7 @@ class NotesDocument:
     source: Path
     model_size: str
     notes: list[BassNote]
+    instrument_mode: str = "unspecified"
 
 
 def write_notes_json(
@@ -83,4 +84,9 @@ def read_notes_json(input_path: Path) -> NotesDocument:
         source=Path(source),
         model_size=cast(str, transcriber["model_size"]),
         notes=notes,
+        instrument_mode=(
+            cast(str, transcriber["instrument_mode"])
+            if isinstance(transcriber.get("instrument_mode"), str)
+            else "unspecified"
+        ),
     )

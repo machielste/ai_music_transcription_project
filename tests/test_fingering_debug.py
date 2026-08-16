@@ -101,6 +101,13 @@ def test_packaged_highway_ui_is_available() -> None:
     assert "function targetFretWindow" in html
     assert "fret - viewStart" in html
     assert "stringPosition" in html
+    assert "stringCount - note.string" in html
+    assert "comparison.strings.slice().reverse()" in html
+    expected_colors = (
+        "const STRING_COLORS = "
+        "['#f28c28', '#3f8cff', '#f2d23c', '#ef4545', '#168a8a']"
+    )
+    assert expected_colors in html
 
 
 def test_debugger_session_can_be_reopened_and_stopped(

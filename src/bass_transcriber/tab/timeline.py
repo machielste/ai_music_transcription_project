@@ -30,11 +30,24 @@ class ResolvedTabNote:
 
 
 @dataclass(frozen=True, slots=True)
+class PrunedChord:
+    """An impossible simultaneous group reduced to one bassline note."""
+
+    start_slot: int
+    available_strings: int
+    original_pitches: tuple[int, ...]
+    kept_pitch: int
+    removed_pitches: tuple[int, ...]
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
 class FingeringTimeline:
     """Resolved notes and pitches rejected by the selected tuning."""
 
     notes: tuple[ResolvedTabNote, ...]
     dropped_pitches: tuple[int, ...]
+    pruned_chords: tuple[PrunedChord, ...] = ()
 
 
 def build_fingering_timeline(
@@ -73,6 +86,8 @@ def build_fingering_timeline(
             + offset_slots,
         )
         events.append(FingeringEvent(raw_note.pitch, start_slot, end_slot))
+
+    events, pruned_chords = _prune_impossible_chords(events, strings)
 
     if profile_name is None:
         fingerings = [_choose_fingering(event.pitch, strings) for event in events]
@@ -113,7 +128,11 @@ def build_fingering_timeline(
                     tab_note.fret,
                 )
             )
-    return FingeringTimeline(tuple(cleaned), tuple(dropped_pitches))
+    return FingeringTimeline(
+        tuple(cleaned),
+        tuple(dropped_pitches),
+        tuple(pruned_chords),
+    )
 
 
 def slot_duration_seconds(grid: RhythmGrid) -> float:
@@ -124,6 +143,101 @@ def slot_duration_seconds(grid: RhythmGrid) -> float:
 def source_aligned_seconds(slot: int, grid: RhythmGrid) -> float:
     """Map an onset-corrected score slot back onto the source-audio clock."""
     return max(0.0, slot * slot_duration_seconds(grid) + grid.onset_delay_seconds)
+
+
+def _prune_impossible_chords(
+    events: list[FingeringEvent],
+    strings: Sequence[tuple[int, int]],
+) -> tuple[list[FingeringEvent], list[PrunedChord]]:
+    """Reduce unplayable onset groups without aborting the entire export."""
+    onset_groups = [
+        list(group)
+        for _, group in groupby(events, key=lambda event: event.start_slot)
+    ]
+    pruned_events: list[FingeringEvent] = []
+    pruned_chords: list[PrunedChord] = []
+
+    for group_index, chord in enumerate(onset_groups):
+        reason: str | None = None
+        if len(chord) > len(strings):
+            reason = "more_notes_than_strings"
+        elif not _has_distinct_string_assignment(chord, strings):
+            reason = "no_distinct_string_assignment"
+
+        if reason is None:
+            pruned_events.extend(chord)
+            continue
+
+        context_groups = _neighboring_playable_pitch_groups(
+            onset_groups,
+            group_index,
+            strings,
+        )
+        kept = min(
+            chord,
+            key=lambda event: (
+                sum(
+                    min(abs(event.pitch - pitch) for pitch in pitches)
+                    for pitches in context_groups
+                ),
+                event.pitch,
+                -(event.end_slot - event.start_slot),
+            ),
+        )
+        original_pitches = tuple(event.pitch for event in chord)
+        removed_pitches = tuple(
+            event.pitch for event in chord if event is not kept
+        )
+        pruned_events.append(kept)
+        pruned_chords.append(
+            PrunedChord(
+                start_slot=kept.start_slot,
+                available_strings=len(strings),
+                original_pitches=original_pitches,
+                kept_pitch=kept.pitch,
+                removed_pitches=removed_pitches,
+                reason=reason,
+            )
+        )
+
+    return pruned_events, pruned_chords
+
+
+def _neighboring_playable_pitch_groups(
+    onset_groups: list[list[FingeringEvent]],
+    group_index: int,
+    strings: Sequence[tuple[int, int]],
+) -> tuple[tuple[int, ...], ...]:
+    """Find the nearest usable pitch context on either side of a bad chord."""
+    neighbors: list[tuple[int, ...]] = []
+    for indexes in (
+        range(group_index - 1, -1, -1),
+        range(group_index + 1, len(onset_groups)),
+    ):
+        for index in indexes:
+            candidate = onset_groups[index]
+            if len(candidate) <= len(strings) and _has_distinct_string_assignment(
+                candidate,
+                strings,
+            ):
+                neighbors.append(tuple(event.pitch for event in candidate))
+                break
+    return tuple(neighbors)
+
+
+def _has_distinct_string_assignment(
+    chord: Sequence[FingeringEvent],
+    strings: Sequence[tuple[int, int]],
+) -> bool:
+    if len(chord) > len(strings):
+        return False
+    candidate_groups = [
+        generate_candidates(event.pitch, strings=strings) for event in chord
+    ]
+    return any(
+        len({choice.string for choice in combination}) == len(combination)
+        for combination in product(*candidate_groups)
+    )
 
 
 def _assign_distinct_chord_strings(

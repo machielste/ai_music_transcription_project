@@ -5,19 +5,25 @@ import pytest
 
 import bass_transcriber.pipeline as pipeline
 from bass_transcriber.export.gp5 import GP5ExportResult
+from bass_transcriber.export.json import write_notes_json
 from bass_transcriber.models import BassNote, RhythmGrid
 from bass_transcriber.pipeline import (
     ProcessingResult,
     debug_path_for,
     output_path_for,
+    raw_notes_path_for,
     rewrite_gp5_fingering,
 )
+from bass_transcriber.tab import PrunedChord
 
 
 def test_output_path_uses_source_stem() -> None:
     assert output_path_for(Path("music/song.mp3"), Path("exports")) == Path("exports/song.bass.gp5")
     assert debug_path_for(Path("music/song.mp3"), Path("exports")) == Path(
         "exports/song.bass.debug.json"
+    )
+    assert raw_notes_path_for(Path("music/song.mp3"), Path("exports")) == Path(
+        "exports/song.bass.raw.notes.json"
     )
 
 
@@ -78,6 +84,11 @@ def test_process_song_runs_pipeline_and_copies_gp5(
     assert result.rhythm == rhythm
     assert result.five_string is True
     assert result.fingering_profile == "balanced"
+    assert result.raw_notes == destination / "source.bass.raw.notes.json"
+    assert result.reused_raw_notes is False
+    raw_document = json.loads(result.raw_notes.read_text(encoding="utf-8"))
+    assert raw_document["source"] == str(source.resolve())
+    assert raw_document["notes"][0]["pitch"] == 28
     debug_document = json.loads(result.debug_log.read_text(encoding="utf-8"))
     assert debug_document["schema_version"] == 1
     assert debug_document["document_type"] == "bass_transcriber_debug_run"
@@ -289,6 +300,67 @@ def test_process_song_surfaces_dropped_note_warning(
     )
 
 
+def test_process_song_surfaces_impossible_chord_pruning_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.mp3"
+    source.write_bytes(b"audio")
+    destination = tmp_path / "exports"
+    notes = [BassNote(38, 0.0, 0.25, "electric_bass")]
+    rhythm = RhythmGrid(
+        detector="test",
+        bpm=120.0,
+        beats_per_bar=4,
+        first_downbeat_seconds=0.0,
+        beat_times_seconds=(0.0, 0.5),
+        onset_delay_seconds=0.0,
+    )
+    pruned = PrunedChord(
+        start_slot=8,
+        available_strings=4,
+        original_pitches=(50, 55, 59, 62, 67),
+        kept_pitch=50,
+        removed_pitches=(55, 59, 62, 67),
+        reason="more_notes_than_strings",
+    )
+
+    monkeypatch.setattr(pipeline.shutil, "which", lambda name: "ffmpeg")
+    monkeypatch.setattr(
+        pipeline,
+        "_convert_to_wav",
+        lambda ffmpeg, input_path, output_path: output_path.write_bytes(b"wav"),
+    )
+    monkeypatch.setattr(pipeline, "transcribe_bass", lambda *args, **kwargs: notes)
+    monkeypatch.setattr(pipeline, "detect_rhythm", lambda *args, **kwargs: rhythm)
+    monkeypatch.setattr(
+        pipeline,
+        "write_gp5",
+        lambda output, *args, **kwargs: (
+            output.write_bytes(b"gp5"),
+            GP5ExportResult(1, (), (pruned,)),
+        )[1],
+    )
+
+    result = pipeline.process_song(source, destination, five_string=False)
+
+    assert result.warnings == (
+        "Reduced 1 impossible simultaneous note group to one bassline note per group "
+        "during GP5 export; removed 4 likely contaminating notes instead of "
+        "aborting: near 0.50s kept MIDI 50 and removed 55, 59, 62, 67.",
+    )
+    debug_document = json.loads(result.debug_log.read_text(encoding="utf-8"))
+    assert debug_document["export"]["pruned_chord_count"] == 1
+    assert debug_document["export"]["pruned_chords"][0] == {
+        "start_slot": 8,
+        "available_strings": 4,
+        "original_pitches": [50, 55, 59, 62, 67],
+        "kept_pitch": 50,
+        "removed_pitches": [55, 59, 62, 67],
+        "reason": "more_notes_than_strings",
+        "approx_source_seconds": 0.5,
+    }
+
+
 def test_process_song_retains_structured_debug_log_on_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -378,3 +450,99 @@ def test_completed_result_can_be_reexported_with_another_fingering(
         "fingering_profile": "compact",
         "five_string": False,
     }
+
+
+def test_process_song_can_reuse_raw_model_output_and_still_postprocess(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.wav"
+    source.write_bytes(b"audio")
+    destination = tmp_path / "exports"
+    raw_input = tmp_path / "previous.notes.json"
+    raw_notes = [
+        BassNote(40, 0.0, 1.0, "electric_bass"),
+        BassNote(40, 1.0, 2.0, "electric_bass"),
+    ]
+    write_notes_json(
+        raw_input,
+        raw_notes,
+        source=tmp_path / "old-location.wav",
+        model_size="small",
+        instrument_mode="auto",
+    )
+    rhythm = RhythmGrid(
+        detector="test",
+        bpm=120.0,
+        beats_per_bar=4,
+        first_downbeat_seconds=0.0,
+        beat_times_seconds=(0.0, 0.5),
+        onset_delay_seconds=0.0,
+    )
+    merged_notes = (BassNote(40, 0.0, 2.0, "electric_bass"),)
+    exported_notes: list[BassNote] = []
+
+    monkeypatch.setattr(pipeline.shutil, "which", lambda name: "ffmpeg")
+    monkeypatch.setattr(
+        pipeline,
+        "_convert_to_wav",
+        lambda ffmpeg, input_path, output_path: output_path.write_bytes(b"wav"),
+    )
+
+    def unexpected_transcription(*args: object, **kwargs: object) -> list[BassNote]:
+        raise AssertionError("MuScriptor must not run when raw notes are selected")
+
+    monkeypatch.setattr(pipeline, "transcribe_bass", unexpected_transcription)
+    monkeypatch.setattr(pipeline, "detect_rhythm", lambda *args, **kwargs: rhythm)
+
+    class FakeCleanup:
+        notes = merged_notes
+
+        @staticmethod
+        def diagnostics() -> dict[str, object]:
+            return {
+                "enabled": True,
+                "input_note_count": 2,
+                "output_note_count": 1,
+                "merged_boundary_count": 1,
+            }
+
+    monkeypatch.setattr(
+        pipeline,
+        "merge_false_retriggers",
+        lambda audio, notes: FakeCleanup(),
+    )
+
+    def write_gp5(
+        output: Path,
+        notes: list[BassNote],
+        *args: object,
+        **kwargs: object,
+    ) -> GP5ExportResult:
+        exported_notes.extend(notes)
+        output.write_bytes(b"gp5")
+        return GP5ExportResult(len(notes), ())
+
+    monkeypatch.setattr(pipeline, "write_gp5", write_gp5)
+
+    result = pipeline.process_song(
+        source,
+        destination,
+        raw_notes_input=raw_input,
+        merge_sustained_retriggers=True,
+        fingering_profile="compact",
+    )
+
+    assert result.reused_raw_notes is True
+    assert result.raw_notes == destination / "source.bass.raw.notes.json"
+    assert exported_notes == list(merged_notes)
+    persisted_raw = json.loads(result.raw_notes.read_text(encoding="utf-8"))
+    assert len(persisted_raw["notes"]) == 2
+    assert persisted_raw["transcriber"] == {
+        "name": "muscriptor",
+        "model_size": "small",
+        "instrument_mode": "auto",
+    }
+    debug_document = json.loads(result.debug_log.read_text(encoding="utf-8"))
+    assert debug_document["configuration"]["transcription_mode"] == "reused_raw_output"
+    assert debug_document["transcription"]["skipped"] is True
+    assert debug_document["postprocessing"]["merged_boundary_count"] == 1

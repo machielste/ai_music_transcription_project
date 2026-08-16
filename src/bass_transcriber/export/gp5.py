@@ -27,6 +27,7 @@ from bass_transcriber.models import BassNote, RhythmGrid
 from bass_transcriber.tab import (
     BEADG_STRINGS,
     EADG_STRINGS,
+    PrunedChord,
     ResolvedTabNote,
     build_fingering_timeline,
 )
@@ -51,6 +52,7 @@ class GP5ExportResult:
 
     exported_note_count: int
     dropped_pitches: tuple[int, ...]
+    pruned_chords: tuple[PrunedChord, ...] = ()
 
 
 def write_gp5(
@@ -65,7 +67,12 @@ def write_gp5(
     """Write a first-pass 4/4 GP5 score for a four- or five-string bass."""
     strings = BEADG_STRINGS if five_string else EADG_STRINGS
     tuning_name = "BEADG" if five_string else "EADG"
-    tab_notes, dropped_pitches = _quantize_and_finger(notes, grid, fingering_profile, strings)
+    tab_notes, dropped_pitches, pruned_chords = _quantize_and_finger(
+        notes,
+        grid,
+        fingering_profile,
+        strings,
+    )
     if not tab_notes:
         if dropped_pitches:
             raise ValueError(
@@ -123,7 +130,11 @@ def write_gp5(
     output.parent.mkdir(parents=True, exist_ok=True)
     guitarpro.write(song, str(output), version=(5, 1, 0))
     _validate_round_trip(output, strings)
-    return GP5ExportResult(len(tab_notes), tuple(dropped_pitches))
+    return GP5ExportResult(
+        len(tab_notes),
+        tuple(dropped_pitches),
+        tuple(pruned_chords),
+    )
 
 
 def _quantize_and_finger(
@@ -131,14 +142,18 @@ def _quantize_and_finger(
     grid: RhythmGrid,
     fingering_profile: str | None,
     strings: tuple[tuple[int, int], ...],
-) -> tuple[list[ResolvedTabNote], list[int]]:
+) -> tuple[list[ResolvedTabNote], list[int], list[PrunedChord]]:
     timeline = build_fingering_timeline(
         notes,
         grid,
         fingering_profile,
         strings=strings,
     )
-    return list(timeline.notes), list(timeline.dropped_pitches)
+    return (
+        list(timeline.notes),
+        list(timeline.dropped_pitches),
+        list(timeline.pruned_chords),
+    )
 
 
 def _new_song(

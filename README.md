@@ -110,14 +110,22 @@ uv run bass-transcriber-gui
 
 Select a music file and destination folder, then choose **Process to GP5**. The UI
 runs the large-model automatic-instrument pipeline in the background and writes
-`<song>.bass.gp5` and a machine-readable `<song>.bass.debug.json` diagnostic log
-into the selected folder. The debug log is retained on both successful and failed
-runs and includes the unfiltered MuScriptor event stream, per-chunk summaries,
-warnings, stage timings, settings, environment details, filtering decisions,
-rhythm output, and export counts. Temporary WAV and intermediate JSON artifacts
-are removed after a successful or failed run. Enable **Also copy the original
-music file to the output folder** when you want the source audio placed beside the
-GP5.
+`<song>.bass.gp5`, a reusable `<song>.bass.raw.notes.json` model artifact, and a
+machine-readable `<song>.bass.debug.json` diagnostic log into the selected
+folder. The debug log is retained on both successful and failed runs and includes
+the unfiltered MuScriptor event stream, per-chunk summaries, warnings, stage
+timings, settings, environment details, filtering decisions, rhythm output, and
+export counts. Temporary WAV and rhythm artifacts are removed after a successful
+or failed run. Enable **Also copy the original music file to the output folder**
+when you want the source audio placed beside the GP5.
+
+To change postprocessing later, select the original music file and destination,
+then optionally select an existing `.notes.json` file under **Raw model output**.
+Choosing **Process to GP5** then skips MuScriptor and reuses those untouched note
+events while rerunning rhythm detection, spectral retrigger merging, tuning,
+fingering, GP5 export, and comparison preparation. The selected music file is
+authoritative, so the original audio path stored inside a moved raw artifact does
+not need to remain valid.
 
 Enable **Force electric-bass instrument conditioning** to test MuScriptor's hard
 electric-bass constraint. It is experimental because non-bass parts may be emitted
@@ -145,7 +153,10 @@ MuScriptor or rhythm detection again.
 The **Use 5-string bass** toggle is off by default. It selects BEADG when enabled
 and four-string EADG when disabled. In four-string mode, the optimizer cannot
 choose the B string; notes below E1 are dropped and listed in the completion
-warnings.
+warnings. If model contamination produces a simultaneous group that cannot be
+placed on distinct strings, export now keeps the pitch closest to the surrounding
+bassline (preferring the lower pitch on a tie), removes the rest of that group,
+and reports the exact decision in both the completion warning and debug JSON.
 
 ## Fingering strategy debugger
 

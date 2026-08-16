@@ -12,6 +12,7 @@ from bass_transcriber.tab.fingering import (
 )
 from bass_transcriber.tab.timeline import (
     FingeringTimeline,
+    PrunedChord,
     ResolvedTabNote,
     build_fingering_timeline,
     slot_duration_seconds,
@@ -26,6 +27,7 @@ __all__ = [
     "FingeringEvent",
     "FingeringProfile",
     "FingeringTimeline",
+    "PrunedChord",
     "ResolvedTabNote",
     "build_fingering_timeline",
     "generate_candidates",

@@ -11,11 +11,12 @@ from pathlib import Path
 
 from bass_transcriber.debug import DebugRun, analyze_audio_file
 from bass_transcriber.export.gp5 import GP5ExportResult, write_gp5
-from bass_transcriber.export.json import write_notes_json
+from bass_transcriber.export.json import read_notes_json, write_notes_json
 from bass_transcriber.export.rhythm_json import write_rhythm_json
 from bass_transcriber.models import BassInstrument, BassNote, RhythmGrid
 from bass_transcriber.postprocess import merge_false_retriggers
 from bass_transcriber.rhythm import detect_rhythm
+from bass_transcriber.tab import source_aligned_seconds
 from bass_transcriber.transcription.muscriptor import TranscriptionTrace, transcribe_bass
 
 ProgressCallback = Callable[[float, str], None]
@@ -36,6 +37,8 @@ class ProcessingResult:
     rhythm: RhythmGrid | None = None
     five_string: bool = True
     fingering_profile: str | None = "balanced"
+    raw_notes: Path | None = None
+    reused_raw_notes: bool = False
 
 
 def output_path_for(source: Path, destination: Path) -> Path:
@@ -48,6 +51,11 @@ def debug_path_for(source: Path, destination: Path) -> Path:
     return destination / f"{source.stem}.bass.debug.json"
 
 
+def raw_notes_path_for(source: Path, destination: Path) -> Path:
+    """Return the reusable unprocessed model-output path for a song."""
+    return destination / f"{source.stem}.bass.raw.notes.json"
+
+
 def process_song(
     source: Path,
     destination: Path,
@@ -55,6 +63,7 @@ def process_song(
     copy_source: bool = False,
     force_electric_bass: bool = False,
     merge_sustained_retriggers: bool = False,
+    raw_notes_input: Path | None = None,
     fingering_profile: str | None = "balanced",
     five_string: bool = True,
     progress: ProgressCallback | None = None,
@@ -62,9 +71,12 @@ def process_song(
     """Run the current production pipeline and copy out one final GP5 file."""
     if not source.is_file():
         raise FileNotFoundError(f"music file does not exist: {source}")
+    if raw_notes_input is not None and not raw_notes_input.is_file():
+        raise FileNotFoundError(f"raw model output does not exist: {raw_notes_input}")
     destination.mkdir(parents=True, exist_ok=True)
     final_output = output_path_for(source, destination)
     final_debug_log = debug_path_for(source, destination)
+    final_raw_notes = raw_notes_path_for(source, destination)
     ffmpeg = shutil.which("ffmpeg")
     instrument: BassInstrument | None = "electric_bass" if force_electric_bass else None
     instrument_mode = "electric_bass" if force_electric_bass else "auto"
@@ -75,6 +87,10 @@ def process_song(
             "copy_source": copy_source,
             "force_electric_bass": force_electric_bass,
             "merge_sustained_retriggers": merge_sustained_retriggers,
+            "raw_notes_input": (
+                str(raw_notes_input.resolve()) if raw_notes_input is not None else None
+            ),
+            "transcription_mode": "reused_raw_output" if raw_notes_input else "muscriptor",
             "instrument_mode": instrument_mode,
             "model_size": "large",
             "transcription_device": "cuda",
@@ -87,6 +103,7 @@ def process_song(
         ffmpeg_path=ffmpeg,
     )
     transcription_trace = TranscriptionTrace()
+    reused_raw_notes = raw_notes_input is not None
 
     try:
         if ffmpeg is None:
@@ -100,38 +117,58 @@ def process_song(
             with debug_run.stage("audio_analysis"):
                 debug_run.set_section("audio", analyze_audio_file(wav))
 
-            mode_description = (
-                " with electric-bass conditioning" if force_electric_bass else ""
-            )
-            _notify(progress, 0.05, f"Loading MuScriptor large model{mode_description}")
-
-            def transcription_progress(completed: int, total: int) -> None:
-                fraction = completed / total if total else 0.0
-                _notify(
-                    progress,
-                    0.05 + 0.72 * fraction,
-                    f"Transcribing audio chunk {completed}/{total}",
+            if raw_notes_input is not None:
+                _notify(progress, 0.05, f"Loading raw model output: {raw_notes_input.name}")
+                with debug_run.stage("raw_note_import"):
+                    raw_document = read_notes_json(raw_notes_input)
+                    raw_notes = raw_document.notes
+                model_size = raw_document.model_size
+                raw_instrument_mode = raw_document.instrument_mode
+                debug_run.set_section(
+                    "transcription",
+                    {
+                        "skipped": True,
+                        "mode": "reused_raw_output",
+                        "input": str(raw_notes_input.resolve()),
+                        "model_size": model_size,
+                        "instrument_mode": raw_instrument_mode,
+                        "note_count": len(raw_notes),
+                    },
                 )
-
-            with debug_run.stage("transcription"):
-                raw_notes = transcribe_bass(
-                    wav,
-                    size="large",
-                    instrument=instrument,
-                    device="cuda",
-                    progress=transcription_progress,
-                    trace=transcription_trace,
+            else:
+                mode_description = (
+                    " with electric-bass conditioning" if force_electric_bass else ""
                 )
-            debug_run.set_section("transcription", transcription_trace.as_dict())
+                _notify(progress, 0.05, f"Loading MuScriptor large model{mode_description}")
 
-            with debug_run.stage("temporary_note_artifact"):
-                notes_json = work / "notes.json"
+                def transcription_progress(completed: int, total: int) -> None:
+                    fraction = completed / total if total else 0.0
+                    _notify(
+                        progress,
+                        0.05 + 0.72 * fraction,
+                        f"Transcribing audio chunk {completed}/{total}",
+                    )
+
+                with debug_run.stage("transcription"):
+                    raw_notes = transcribe_bass(
+                        wav,
+                        size="large",
+                        instrument=instrument,
+                        device="cuda",
+                        progress=transcription_progress,
+                        trace=transcription_trace,
+                    )
+                debug_run.set_section("transcription", transcription_trace.as_dict())
+                model_size = "large"
+                raw_instrument_mode = instrument_mode
+
+            with debug_run.stage("raw_note_artifact"):
                 write_notes_json(
-                    notes_json,
+                    final_raw_notes,
                     raw_notes,
-                    source=wav,
-                    model_size="large",
-                    instrument_mode=instrument_mode,
+                    source=source,
+                    model_size=model_size,
+                    instrument_mode=raw_instrument_mode,
                 )
 
             _notify(progress, 0.80, "Detecting tempo and beat grid")
@@ -176,6 +213,16 @@ def process_song(
                     fingering_profile=fingering_profile,
                     five_string=five_string,
                 )
+            pruned_chord_details = [
+                {
+                    **asdict(chord),
+                    "approx_source_seconds": round(
+                        source_aligned_seconds(chord.start_slot, rhythm),
+                        3,
+                    ),
+                }
+                for chord in export_result.pruned_chords
+            ]
             debug_run.set_section(
                 "export",
                 {
@@ -183,6 +230,8 @@ def process_song(
                     "exported_note_count": export_result.exported_note_count,
                     "dropped_note_count": len(export_result.dropped_pitches),
                     "dropped_pitches": list(export_result.dropped_pitches),
+                    "pruned_chord_count": len(export_result.pruned_chords),
+                    "pruned_chords": pruned_chord_details,
                 },
             )
             with debug_run.stage("gp5_copy_to_destination"):
@@ -214,6 +263,34 @@ def process_song(
                 details={"pitch_counts": pitch_counts},
             )
 
+        if export_result.pruned_chords:
+            removed_count = sum(
+                len(chord.removed_pitches) for chord in export_result.pruned_chords
+            )
+            chord_summaries = []
+            for chord in export_result.pruned_chords:
+                approximate_seconds = source_aligned_seconds(chord.start_slot, rhythm)
+                removed = ", ".join(str(pitch) for pitch in chord.removed_pitches)
+                chord_summaries.append(
+                    f"near {approximate_seconds:.2f}s kept MIDI "
+                    f"{chord.kept_pitch} and removed {removed}"
+                )
+            chord_count = len(export_result.pruned_chords)
+            warning_message = (
+                f"Reduced {chord_count} impossible simultaneous note "
+                f"group{'s' if chord_count != 1 else ''} to one bassline note per group "
+                f"during GP5 export; removed {removed_count} likely contaminating "
+                f"note{'s' if removed_count != 1 else ''} instead of aborting: "
+                + "; ".join(chord_summaries)
+                + "."
+            )
+            pipeline_warnings.append(warning_message)
+            debug_run.add_warning(
+                warning_message,
+                category="gp5_impossible_chord_pruning",
+                details={"chords": pruned_chord_details},
+            )
+
         copied_source: Path | None = None
         source_copy = destination / source.name
         if copy_source and source.resolve() != source_copy.resolve():
@@ -229,6 +306,8 @@ def process_song(
                 "bpm": rhythm.bpm,
                 "copied_source": str(copied_source.resolve()) if copied_source else None,
                 "warnings": pipeline_warnings,
+                "raw_notes": str(final_raw_notes.resolve()),
+                "reused_raw_notes": reused_raw_notes,
             },
         )
         debug_run.finish_success()
@@ -246,9 +325,12 @@ def process_song(
             rhythm=rhythm,
             five_string=five_string,
             fingering_profile=fingering_profile,
+            raw_notes=final_raw_notes,
+            reused_raw_notes=reused_raw_notes,
         )
     except Exception as error:
-        debug_run.set_section("transcription", transcription_trace.as_dict())
+        if not reused_raw_notes:
+            debug_run.set_section("transcription", transcription_trace.as_dict())
         debug_run.finish_failure(error)
         try:
             debug_run.write(final_debug_log)

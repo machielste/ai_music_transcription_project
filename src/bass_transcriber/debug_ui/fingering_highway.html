@@ -16,11 +16,11 @@
       --muted: #9da7b3;
       --accent: #d8ff48;
       --accent-text: #101400;
-      --g-string: #5cc8ff;
-      --d-string: #ff9e57;
-      --a-string: #65d892;
-      --e-string: #ef7fbd;
-      --b-string: #9a83ed;
+      --g-string: #f28c28;
+      --d-string: #3f8cff;
+      --a-string: #f2d23c;
+      --e-string: #ef4545;
+      --b-string: #168a8a;
     }
     * { box-sizing: border-box; }
     body {
@@ -211,7 +211,8 @@
     'use strict';
 
     const LOOKAHEAD_SECONDS = 4.5;
-    const STRING_COLORS = ['#5cc8ff', '#ff9e57', '#65d892', '#ef7fbd', '#9a83ed'];
+    // Guitar Pro numbers strings from highest to lowest: G, D, A, E, B.
+    const STRING_COLORS = ['#f28c28', '#3f8cff', '#f2d23c', '#ef4545', '#168a8a'];
     const dom = {
       sourceLabel: document.getElementById('source-label'),
       status: document.getElementById('status'),
@@ -378,12 +379,12 @@
 
     function setupLegend() {
       dom.legend.replaceChildren();
-      comparison.strings.forEach((string, index) => {
+      comparison.strings.slice().reverse().forEach(string => {
         const item = document.createElement('span');
         item.className = 'legend-item';
         const swatch = document.createElement('span');
         swatch.className = 'swatch';
-        swatch.style.background = STRING_COLORS[index];
+        swatch.style.background = STRING_COLORS[string.number - 1];
         item.append(swatch, document.createTextNode(`${string.name} string`));
         dom.legend.appendChild(item);
       });
@@ -620,7 +621,7 @@
           geometry: project(
             width,
             height,
-            note.string - 1,
+            stringCount - note.string,
             note.fret,
             delta,
             viewStart,
@@ -649,7 +650,7 @@
         const tail = project(
           width,
           height,
-          note.string - 1,
+          stringCount - note.string,
           note.fret,
           Math.max(0, note.end_seconds - currentTime),
           viewStart,
@@ -705,9 +706,9 @@
       context.textAlign = 'left';
       context.fillText(`+${LOOKAHEAD_SECONDS.toFixed(1)}s`, far.left - 4, far.top + 9);
       context.textAlign = 'center';
-      comparison.strings.forEach((string, index) => {
+      comparison.strings.slice().reverse().forEach((string, index) => {
         const y = near.top + ((index + 0.5) / stringCount) * (near.bottom - near.top);
-        context.fillStyle = STRING_COLORS[index];
+        context.fillStyle = STRING_COLORS[string.number - 1];
         context.textAlign = 'right';
         context.fillText(string.name, near.left - 8, y);
       });

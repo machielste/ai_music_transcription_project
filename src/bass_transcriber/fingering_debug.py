@@ -107,6 +107,16 @@ def build_comparison_document(
                 "notes": resolved_notes,
                 "metrics": _timeline_metrics(timeline.notes),
                 "dropped_pitches": list(timeline.dropped_pitches),
+                "pruned_chords": [
+                    {
+                        "start_slot": chord.start_slot,
+                        "original_pitches": list(chord.original_pitches),
+                        "kept_pitch": chord.kept_pitch,
+                        "removed_pitches": list(chord.removed_pitches),
+                        "reason": chord.reason,
+                    }
+                    for chord in timeline.pruned_chords
+                ],
             }
         )
 

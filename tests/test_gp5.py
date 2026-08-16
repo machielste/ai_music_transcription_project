@@ -98,6 +98,53 @@ def test_gp5_four_string_mode_excludes_b_string_and_drops_notes_below_e(
     assert result.dropped_pitches == (23,)
 
 
+def test_gp5_reduces_an_impossible_chord_to_the_contextually_closest_pitch(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "contaminated-chord.gp5"
+    grid = RhythmGrid(
+        detector="test",
+        bpm=120.0,
+        beats_per_bar=4,
+        first_downbeat_seconds=0.0,
+        beat_times_seconds=(0.0, 0.5, 1.0),
+        onset_delay_seconds=0.0,
+    )
+    notes = [
+        BassNote(38, 0.0, 0.25, "electric_bass"),
+        BassNote(50, 0.5, 0.75, "electric_bass"),
+        BassNote(55, 0.5, 0.75, "electric_bass"),
+        BassNote(59, 0.5, 0.75, "electric_bass"),
+        BassNote(62, 0.5, 0.75, "electric_bass"),
+        BassNote(67, 0.5, 0.75, "electric_bass"),
+        BassNote(38, 1.0, 1.25, "electric_bass"),
+    ]
+
+    result = write_gp5(
+        output,
+        notes,
+        grid,
+        title="Contaminated chord",
+        five_string=False,
+    )
+    song = guitarpro.parse(str(output))
+    sounding_pitches = [
+        note.realValue
+        for measure in song.tracks[0].measures
+        for beat in measure.voices[0].beats
+        for note in beat.notes
+        if note.type.name == "normal"
+    ]
+
+    assert sounding_pitches == [38, 50, 38]
+    assert result.exported_note_count == 3
+    assert len(result.pruned_chords) == 1
+    assert result.pruned_chords[0].original_pitches == (50, 55, 59, 62, 67)
+    assert result.pruned_chords[0].kept_pitch == 50
+    assert result.pruned_chords[0].removed_pitches == (55, 59, 62, 67)
+    assert result.pruned_chords[0].reason == "more_notes_than_strings"
+
+
 def test_gp5_writes_simultaneous_octaves_as_a_tied_chord_across_measures(
     tmp_path: Path,
 ) -> None:
