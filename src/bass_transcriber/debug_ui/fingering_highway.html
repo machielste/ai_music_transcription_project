@@ -428,29 +428,92 @@
         canvas.setAttribute('aria-label', `${strategy.label} perspective note highway`);
         section.append(header, canvas);
         dom.grid.appendChild(section);
-        return { strategy, strategyIndex, canvas, active };
+        return {
+          strategy,
+          strategyIndex,
+          canvas,
+          active,
+          cameraCenter: null,
+          cameraSpan: 9,
+          lastTime: null
+        };
       });
     }
 
-    function project(width, height, stringIndex, deltaSeconds) {
-      const nearY = height - 30;
-      const farY = 24;
+    function boardPlane(width, height, deltaSeconds) {
       const normalized = Math.max(0, Math.min(1, deltaSeconds / LOOKAHEAD_SECONDS));
       const depth = Math.sqrt(normalized);
-      const nearLeft = 20;
-      const nearRight = width - 20;
-      const farLeft = width * 0.35;
-      const farRight = width * 0.65;
-      const left = nearLeft + depth * (farLeft - nearLeft);
-      const right = nearRight + depth * (farRight - nearRight);
-      const laneWidth = (right - left) / comparison.strings.length;
-      return {
-        x: left + laneWidth * (stringIndex + 0.5),
-        y: nearY - depth * (nearY - farY),
-        left,
-        right,
-        laneWidth
+      const near = {
+        left: 42,
+        right: width - 18,
+        top: height * 0.39,
+        bottom: height - 24
       };
+      const far = {
+        left: width * 0.42,
+        right: width * 0.58,
+        top: 22,
+        bottom: height * 0.25
+      };
+      return {
+        left: near.left + depth * (far.left - near.left),
+        right: near.right + depth * (far.right - near.right),
+        top: near.top + depth * (far.top - near.top),
+        bottom: near.bottom + depth * (far.bottom - near.bottom),
+        depth
+      };
+    }
+
+    function project(width, height, stringIndex, fret, deltaSeconds, viewStart, viewSpan) {
+      const plane = boardPlane(width, height, deltaSeconds);
+      const rawFretPosition = (fret - viewStart) / viewSpan;
+      const fretPosition = Math.max(0, Math.min(1, rawFretPosition));
+      const stringPosition = (stringIndex + 0.5) / comparison.strings.length;
+      return {
+        ...plane,
+        x: plane.left + fretPosition * (plane.right - plane.left),
+        y: plane.top + stringPosition * (plane.bottom - plane.top),
+        fretWidth: (plane.right - plane.left) / viewSpan,
+        stringHeight: (plane.bottom - plane.top) / comparison.strings.length,
+        offscreen: rawFretPosition < 0 ? -1 : rawFretPosition > 1 ? 1 : 0
+      };
+    }
+
+    function targetFretWindow(strategy, currentTime) {
+      let candidates = strategy.notes.filter(note =>
+        note.end_seconds >= currentTime - 0.05 &&
+        note.start_seconds <= currentTime + 1.35
+      );
+      if (!candidates.length) {
+        const next = strategy.notes.find(note => note.start_seconds > currentTime);
+        if (next) candidates = [next];
+      }
+      if (!candidates.length) return { center: 4.5, span: 9 };
+      const frets = candidates.map(note => note.fret);
+      const minimum = Math.min(...frets);
+      const maximum = Math.max(...frets);
+      const span = Math.max(7, Math.min(13, maximum - minimum + 4));
+      const unclampedCenter = (minimum + maximum) / 2;
+      return {
+        center: Math.max(span / 2, Math.min(24 - span / 2, unclampedCenter)),
+        span
+      };
+    }
+
+    function updateFretWindow(panel, currentTime) {
+      const target = targetFretWindow(panel.strategy, currentTime);
+      const jumped = panel.lastTime === null || Math.abs(currentTime - panel.lastTime) > 0.4;
+      if (panel.cameraCenter === null || jumped) {
+        panel.cameraCenter = target.center;
+        panel.cameraSpan = target.span;
+      } else {
+        panel.cameraCenter += (target.center - panel.cameraCenter) * 0.09;
+        panel.cameraSpan += (target.span - panel.cameraSpan) * 0.09;
+      }
+      panel.lastTime = currentTime;
+      const viewSpan = Math.max(7, Math.min(13, panel.cameraSpan));
+      const viewStart = Math.max(0, Math.min(24 - viewSpan, panel.cameraCenter - viewSpan / 2));
+      return { viewStart, viewSpan };
     }
 
     function roundedRect(context, x, y, width, height, radius) {
@@ -480,52 +543,70 @@
       context.fillStyle = '#0f1216';
       context.fillRect(0, 0, width, height);
 
-      const nearY = height - 30;
-      const farY = 24;
-      const nearLeft = 20;
-      const nearRight = width - 20;
-      const farLeft = width * 0.35;
-      const farRight = width * 0.65;
+      const near = boardPlane(width, height, 0);
+      const far = boardPlane(width, height, LOOKAHEAD_SECONDS);
       const stringCount = comparison.strings.length;
+      const { viewStart, viewSpan } = updateFretWindow(panel, currentTime);
+      const viewEnd = viewStart + viewSpan;
 
       context.fillStyle = '#1b2026';
       context.beginPath();
-      context.moveTo(farLeft, farY);
-      context.lineTo(farRight, farY);
-      context.lineTo(nearRight, nearY);
-      context.lineTo(nearLeft, nearY);
+      context.moveTo(far.left, far.top);
+      context.lineTo(far.right, far.top);
+      context.lineTo(near.right, near.top);
+      context.lineTo(near.right, near.bottom);
+      context.lineTo(near.left, near.bottom);
+      context.lineTo(near.left, near.top);
       context.closePath();
       context.fill();
 
       context.strokeStyle = '#343c46';
       context.lineWidth = 1;
       for (let index = 0; index < stringCount; index++) {
-        const farX = farLeft + ((index + 0.5) / stringCount) * (farRight - farLeft);
-        const nearX = nearLeft + ((index + 0.5) / stringCount) * (nearRight - nearLeft);
+        const stringPosition = (index + 0.5) / stringCount;
+        const farY = far.top + stringPosition * (far.bottom - far.top);
+        const nearY = near.top + stringPosition * (near.bottom - near.top);
         context.beginPath();
-        context.moveTo(farX, farY);
-        context.lineTo(nearX, nearY);
+        context.moveTo(far.left, farY);
+        context.lineTo(far.right, farY);
+        context.lineTo(near.right, nearY);
+        context.lineTo(near.left, nearY);
+        context.closePath();
+        context.stroke();
+      }
+
+      const firstFret = Math.ceil(viewStart);
+      const lastFret = Math.floor(viewEnd);
+      for (let fret = firstFret; fret <= lastFret; fret++) {
+        const position = (fret - viewStart) / viewSpan;
+        const nearX = near.left + position * (near.right - near.left);
+        const farX = far.left + position * (far.right - far.left);
+        context.beginPath();
+        context.moveTo(farX, far.top);
+        context.lineTo(farX, far.bottom);
+        context.moveTo(farX, far.top);
+        context.lineTo(nearX, near.top);
+        context.moveTo(farX, far.bottom);
+        context.lineTo(nearX, near.bottom);
+        context.moveTo(nearX, near.top);
+        context.lineTo(nearX, near.bottom);
         context.stroke();
       }
 
       const beatSeconds = 60 / comparison.bpm;
       const firstBeat = Math.ceil(currentTime / beatSeconds) * beatSeconds;
       for (let beat = firstBeat; beat <= currentTime + LOOKAHEAD_SECONDS; beat += beatSeconds) {
-        const geometry = project(width, height, 0, beat - currentTime);
+        const plane = boardPlane(width, height, beat - currentTime);
         context.globalAlpha = 0.5;
         context.beginPath();
-        context.moveTo(geometry.left, geometry.y);
-        context.lineTo(geometry.right, geometry.y);
+        context.rect(plane.left, plane.top, plane.right - plane.left, plane.bottom - plane.top);
         context.stroke();
         context.globalAlpha = 1;
       }
 
       context.strokeStyle = '#f3f5f7';
-      context.lineWidth = 3;
-      context.beginPath();
-      context.moveTo(nearLeft, nearY);
-      context.lineTo(nearRight, nearY);
-      context.stroke();
+      context.lineWidth = 2.5;
+      context.strokeRect(near.left, near.top, near.right - near.left, near.bottom - near.top);
 
       const visible = [];
       for (let index = 0; index < panel.strategy.notes.length; index++) {
@@ -533,7 +614,19 @@
         if (note.end_seconds < currentTime - 0.04) continue;
         if (note.start_seconds > currentTime + LOOKAHEAD_SECONDS) break;
         const delta = Math.max(0, note.start_seconds - currentTime);
-        visible.push({ index, note, geometry: project(width, height, note.string - 1, delta) });
+        visible.push({
+          index,
+          note,
+          geometry: project(
+            width,
+            height,
+            note.string - 1,
+            note.fret,
+            delta,
+            viewStart,
+            viewSpan
+          )
+        });
       }
 
       if (visible.length > 1) {
@@ -557,10 +650,13 @@
           width,
           height,
           note.string - 1,
-          Math.max(0, note.end_seconds - currentTime)
+          note.fret,
+          Math.max(0, note.end_seconds - currentTime),
+          viewStart,
+          viewSpan
         );
-        const noteWidth = Math.max(18, geometry.laneWidth * 0.72);
-        const noteHeight = Math.max(11, 17 - Math.max(0, note.start_seconds - currentTime));
+        const noteWidth = Math.max(17, geometry.fretWidth * 0.68);
+        const noteHeight = Math.max(10, geometry.stringHeight * 0.58);
         const color = STRING_COLORS[note.string - 1];
         context.strokeStyle = color;
         context.globalAlpha = 0.42;
@@ -591,23 +687,40 @@
         }
         context.fillStyle = '#090b0e';
         context.fillText(String(note.fret), geometry.x, geometry.y + 0.5);
+        if (geometry.offscreen) {
+          context.fillStyle = '#f3f5f7';
+          context.beginPath();
+          const direction = geometry.offscreen;
+          context.moveTo(geometry.x, geometry.y);
+          context.lineTo(geometry.x - direction * 8, geometry.y - 5);
+          context.lineTo(geometry.x - direction * 8, geometry.y + 5);
+          context.closePath();
+          context.fill();
+        }
         if (currentTime >= note.start_seconds && currentTime < note.end_seconds) activeNote = note;
       }
 
       context.font = '500 11px system-ui, sans-serif';
       context.fillStyle = '#9da7b3';
       context.textAlign = 'left';
-      context.fillText(`+${LOOKAHEAD_SECONDS.toFixed(1)}s`, farLeft - 4, farY + 9);
+      context.fillText(`+${LOOKAHEAD_SECONDS.toFixed(1)}s`, far.left - 4, far.top + 9);
       context.textAlign = 'center';
       comparison.strings.forEach((string, index) => {
-        const x = nearLeft + ((index + 0.5) / stringCount) * (nearRight - nearLeft);
+        const y = near.top + ((index + 0.5) / stringCount) * (near.bottom - near.top);
         context.fillStyle = STRING_COLORS[index];
-        context.fillText(string.name, x, height - 11);
+        context.textAlign = 'right';
+        context.fillText(string.name, near.left - 8, y);
       });
+      context.textAlign = 'center';
+      for (let fret = firstFret; fret <= lastFret; fret++) {
+        const x = near.left + ((fret - viewStart) / viewSpan) * (near.right - near.left);
+        context.fillStyle = '#9da7b3';
+        context.fillText(String(fret), x, near.top - 9);
+      }
 
       panel.active.textContent = activeNote
         ? `${comparison.strings[activeNote.string - 1].name} string · fret ${activeNote.fret}`
-        : 'Approaching';
+        : `frets ${Math.ceil(viewStart)}–${Math.floor(viewEnd)}`;
     }
 
     function updatePlaybackButton() {

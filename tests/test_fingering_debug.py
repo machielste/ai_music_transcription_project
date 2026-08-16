@@ -98,6 +98,9 @@ def test_packaged_highway_ui_is_available() -> None:
     assert "<canvas" not in html
     assert "document.createElement('canvas')" in html
     assert "perspective note highway" in html
+    assert "function targetFretWindow" in html
+    assert "fret - viewStart" in html
+    assert "stringPosition" in html
 
 
 def test_debugger_session_can_be_reopened_and_stopped(

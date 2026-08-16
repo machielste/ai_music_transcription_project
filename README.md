@@ -162,6 +162,9 @@ continues until `Ctrl+C` is pressed. All strategy panels share the source-audio
 clock. The browser mixes the recording with a lightweight synthesized version
 of the quantized bass notes; both levels can be adjusted independently. White
 note outlines mark placements that differ from the first profile in the view.
+Each highway stacks the bass strings vertically, maps fret position from left to
+right, and uses depth for time. The visible fret window pans smoothly toward
+upcoming positions so large hand shifts remain readable.
 
 Use `--strings 4` for EADG, `--no-open` to suppress automatic browser launch,
 or select a subset and comparison order explicitly:
