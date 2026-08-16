@@ -124,6 +124,13 @@ electric-bass constraint. It is experimental because non-bass parts may be emitt
 as bass notes. The option is off by default, preserving automatic instrument
 classification.
 
+Enable **Merge false sustained-note retriggers using spectral attack detection**
+to inspect contiguous same-pitch sustained notes in a pitch-conditioned
+spectrogram. Both fragments must be at least 0.5 seconds long. A boundary with a
+fresh bass attack is preserved; a boundary without one is merged into a sustained
+note. The option is off by default and its decisions are retained in the debug log
+under `postprocessing`.
+
 The **Fingering style** selector applies an optional phrase-level optimizer after
 rhythm quantization. Choose **Legacy lowest fret** to bypass that stage and retain
 the original per-note behavior.

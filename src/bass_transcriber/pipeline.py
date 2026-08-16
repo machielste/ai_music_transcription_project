@@ -14,6 +14,7 @@ from bass_transcriber.export.gp5 import write_gp5
 from bass_transcriber.export.json import write_notes_json
 from bass_transcriber.export.rhythm_json import write_rhythm_json
 from bass_transcriber.models import BassInstrument
+from bass_transcriber.postprocess import merge_false_retriggers
 from bass_transcriber.rhythm import detect_rhythm
 from bass_transcriber.transcription.muscriptor import TranscriptionTrace, transcribe_bass
 
@@ -48,6 +49,7 @@ def process_song(
     *,
     copy_source: bool = False,
     force_electric_bass: bool = False,
+    merge_sustained_retriggers: bool = False,
     fingering_profile: str | None = "balanced",
     five_string: bool = True,
     progress: ProgressCallback | None = None,
@@ -67,6 +69,7 @@ def process_song(
         configuration={
             "copy_source": copy_source,
             "force_electric_bass": force_electric_bass,
+            "merge_sustained_retriggers": merge_sustained_retriggers,
             "instrument_mode": instrument_mode,
             "model_size": "large",
             "transcription_device": "cuda",
@@ -106,7 +109,7 @@ def process_song(
                 )
 
             with debug_run.stage("transcription"):
-                notes = transcribe_bass(
+                raw_notes = transcribe_bass(
                     wav,
                     size="large",
                     instrument=instrument,
@@ -120,7 +123,7 @@ def process_song(
                 notes_json = work / "notes.json"
                 write_notes_json(
                     notes_json,
-                    notes,
+                    raw_notes,
                     source=wav,
                     model_size="large",
                     instrument_mode=instrument_mode,
@@ -130,13 +133,31 @@ def process_song(
             with debug_run.stage("rhythm_detection"):
                 rhythm = detect_rhythm(
                     wav,
-                    note_onsets=[note.start_seconds for note in notes],
+                    note_onsets=[note.start_seconds for note in raw_notes],
                     device="cuda",
                     detector="auto",
                 )
             debug_run.set_section("rhythm", asdict(rhythm))
             with debug_run.stage("temporary_rhythm_artifact"):
                 write_rhythm_json(work / "rhythm.json", rhythm, source=wav)
+
+            notes = raw_notes
+            if merge_sustained_retriggers:
+                _notify(progress, 0.88, "Checking repeated notes for fresh bass attacks")
+                with debug_run.stage("spectral_retrigger_cleanup"):
+                    cleanup = merge_false_retriggers(wav, raw_notes)
+                    notes = list(cleanup.notes)
+                debug_run.set_section("postprocessing", cleanup.diagnostics())
+            else:
+                debug_run.set_section(
+                    "postprocessing",
+                    {
+                        "enabled": False,
+                        "algorithm": "pitch_conditioned_stft_v1",
+                        "input_note_count": len(raw_notes),
+                        "output_note_count": len(raw_notes),
+                    },
+                )
 
             string_description = "five-string" if five_string else "four-string"
             _notify(progress, 0.93, f"Writing synchronized {string_description} GP5")

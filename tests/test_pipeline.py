@@ -127,6 +127,79 @@ def test_process_song_can_force_electric_bass_conditioning(
     assert transcription_kwargs["instrument"] == "electric_bass"
 
 
+def test_process_song_optionally_merges_false_sustained_retriggers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.mp3"
+    source.write_bytes(b"audio")
+    destination = tmp_path / "exports"
+    raw_notes = [
+        BassNote(40, 0.0, 1.0, "electric_bass"),
+        BassNote(40, 1.0, 2.0, "electric_bass"),
+    ]
+    merged_notes = (BassNote(40, 0.0, 2.0, "electric_bass"),)
+    rhythm = RhythmGrid(
+        detector="test",
+        bpm=120.0,
+        beats_per_bar=4,
+        first_downbeat_seconds=0.0,
+        beat_times_seconds=(0.0, 0.5),
+        onset_delay_seconds=0.0,
+    )
+    exported_notes: list[BassNote] = []
+
+    monkeypatch.setattr(pipeline.shutil, "which", lambda name: "ffmpeg")
+    monkeypatch.setattr(
+        pipeline,
+        "_convert_to_wav",
+        lambda ffmpeg, input_path, output_path: output_path.write_bytes(b"wav"),
+    )
+    monkeypatch.setattr(pipeline, "transcribe_bass", lambda *args, **kwargs: raw_notes)
+    monkeypatch.setattr(pipeline, "detect_rhythm", lambda *args, **kwargs: rhythm)
+
+    class FakeCleanup:
+        notes = merged_notes
+
+        @staticmethod
+        def diagnostics() -> dict[str, object]:
+            return {
+                "enabled": True,
+                "input_note_count": 2,
+                "output_note_count": 1,
+                "merged_boundary_count": 1,
+            }
+
+    monkeypatch.setattr(
+        pipeline,
+        "merge_false_retriggers",
+        lambda audio, notes: FakeCleanup(),
+    )
+
+    def write_gp5(
+        output: Path,
+        notes: list[BassNote],
+        *args: object,
+        **kwargs: object,
+    ) -> GP5ExportResult:
+        exported_notes.extend(notes)
+        output.write_bytes(b"gp5")
+        return GP5ExportResult(len(notes), ())
+
+    monkeypatch.setattr(pipeline, "write_gp5", write_gp5)
+
+    result = pipeline.process_song(
+        source,
+        destination,
+        merge_sustained_retriggers=True,
+    )
+
+    assert exported_notes == list(merged_notes)
+    assert result.note_count == 1
+    debug_document = json.loads(result.debug_log.read_text(encoding="utf-8"))
+    assert debug_document["configuration"]["merge_sustained_retriggers"] is True
+    assert debug_document["postprocessing"]["merged_boundary_count"] == 1
+
+
 def test_process_song_optionally_copies_original_audio(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

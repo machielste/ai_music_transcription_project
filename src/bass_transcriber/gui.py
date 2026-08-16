@@ -36,12 +36,13 @@ class TranscriberApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("Bass Transcriber")
-        self.root.minsize(680, 350)
+        self.root.minsize(680, 390)
 
         self.source = tk.StringVar()
         self.destination = tk.StringVar(value=str((Path.cwd() / "outputs").resolve()))
         self.copy_source = tk.BooleanVar(value=False)
         self.force_electric_bass = tk.BooleanVar(value=False)
+        self.merge_sustained_retriggers = tk.BooleanVar(value=False)
         self.five_string = tk.BooleanVar(value=False)
         self.fingering_style = tk.StringVar(value="Balanced (recommended)")
         self.status = tk.StringVar(value="Select a music file and output folder.")
@@ -85,33 +86,42 @@ class TranscriberApp:
 
         ttk.Checkbutton(
             frame,
+            text=(
+                "Merge false sustained-note retriggers using spectral attack detection "
+                "(experimental)"
+            ),
+            variable=self.merge_sustained_retriggers,
+        ).grid(row=4, column=0, columnspan=3, sticky="w", pady=(4, 8))
+
+        ttk.Checkbutton(
+            frame,
             text="Also copy the original music file to the output folder",
             variable=self.copy_source,
-        ).grid(row=4, column=0, columnspan=3, sticky="w", pady=(4, 8))
+        ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(4, 8))
 
         ttk.Checkbutton(
             frame,
             text="Use 5-string bass (BEADG); turn off for 4-string EADG",
             variable=self.five_string,
-        ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(4, 8))
+        ).grid(row=6, column=0, columnspan=3, sticky="w", pady=(4, 8))
 
-        ttk.Label(frame, text="Fingering style").grid(row=6, column=0, sticky="w", pady=6)
+        ttk.Label(frame, text="Fingering style").grid(row=7, column=0, sticky="w", pady=6)
         ttk.Combobox(
             frame,
             textvariable=self.fingering_style,
             values=tuple(_FINGERING_OPTIONS),
             state="readonly",
-        ).grid(row=6, column=1, columnspan=2, sticky="ew", padx=(10, 0), pady=6)
+        ).grid(row=7, column=1, columnspan=2, sticky="ew", padx=(10, 0), pady=6)
 
         ttk.Progressbar(
             frame,
             variable=self.progress,
             maximum=100.0,
             mode="determinate",
-        ).grid(row=7, column=0, columnspan=3, sticky="ew", pady=8)
+        ).grid(row=8, column=0, columnspan=3, sticky="ew", pady=8)
 
         ttk.Label(frame, textvariable=self.status, wraplength=620).grid(
-            row=8, column=0, columnspan=3, sticky="w", pady=6
+            row=9, column=0, columnspan=3, sticky="w", pady=6
         )
 
         self.process_button = ttk.Button(
@@ -119,7 +129,7 @@ class TranscriberApp:
             text="Process to GP5",
             command=self._start_processing,
         )
-        self.process_button.grid(row=9, column=0, columnspan=3, pady=(14, 0))
+        self.process_button.grid(row=10, column=0, columnspan=3, pady=(14, 0))
 
     def _choose_source(self) -> None:
         selected = filedialog.askopenfilename(title="Select music file", filetypes=_AUDIO_TYPES)
@@ -174,6 +184,7 @@ class TranscriberApp:
                 destination,
                 self.copy_source.get(),
                 self.force_electric_bass.get(),
+                self.merge_sustained_retriggers.get(),
                 _FINGERING_OPTIONS[self.fingering_style.get()],
                 self.five_string.get(),
             ),
@@ -187,6 +198,7 @@ class TranscriberApp:
         destination: Path,
         copy_source: bool,
         force_electric_bass: bool,
+        merge_sustained_retriggers: bool,
         fingering_profile: str | None,
         five_string: bool,
     ) -> None:
@@ -199,6 +211,7 @@ class TranscriberApp:
                 destination,
                 copy_source=copy_source,
                 force_electric_bass=force_electric_bass,
+                merge_sustained_retriggers=merge_sustained_retriggers,
                 fingering_profile=fingering_profile,
                 five_string=five_string,
                 progress=report,
