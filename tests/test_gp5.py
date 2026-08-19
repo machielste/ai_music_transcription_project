@@ -36,6 +36,30 @@ def test_gp5_round_trips_five_string_tuning_and_notes(tmp_path: Path) -> None:
     assert [(note.string, note.value) for note in sounding] == [(5, 2), (4, 0)]
 
 
+def test_gp5_replaces_metadata_characters_not_supported_by_legacy_encoding(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "unicode-title.gp5"
+    grid = RhythmGrid(
+        detector="test",
+        bpm=120.0,
+        beats_per_bar=4,
+        first_downbeat_seconds=0.0,
+        beat_times_seconds=(0.0, 0.5),
+        onset_delay_seconds=0.0,
+    )
+
+    write_gp5(
+        output,
+        [BassNote(28, 0.0, 0.25, "electric_bass")],
+        grid,
+        title="测试 – Bass",
+    )
+
+    song = guitarpro.parse(str(output))
+    assert song.title == "?? – Bass"
+
+
 def test_fractional_tempo_schedule_has_bounded_cumulative_error() -> None:
     target_bpm = 117.454
     schedule = _tempo_schedule(target_bpm, 132)

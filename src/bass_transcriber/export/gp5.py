@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -45,6 +46,28 @@ _DURATION_VALUE_BY_SLOTS = {
     2: Duration.sixteenth,
     1: Duration.thirtySecond,
 }
+
+_GP5_TEXT_ENCODING = "cp1252"
+logger = logging.getLogger(__name__)
+
+
+def _gp5_compatible_text(value: str) -> str:
+    """Return text that can be stored in GP5's legacy 8-bit text fields.
+
+    GP5 does not have Unicode metadata fields. PyGuitarPro therefore writes
+    them using cp1252 and raises ``UnicodeEncodeError`` for characters such
+    as Chinese text or emoji. Keep all representable characters and replace
+    only the characters the file format cannot store.
+    """
+    compatible = value.encode(_GP5_TEXT_ENCODING, errors="replace").decode(
+        _GP5_TEXT_ENCODING
+    )
+    if compatible != value:
+        logger.warning(
+            "GP5 metadata cannot represent some characters; replaced them with '?': %r",
+            value,
+        )
+    return compatible
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,7 +209,11 @@ def _new_song(
     measure_count: int,
     strings: tuple[tuple[int, int], ...],
 ) -> Song:
-    song = Song(title=title, tempo=initial_bpm, tempoName="Detected tempo")
+    song = Song(
+        title=_gp5_compatible_text(title),
+        tempo=initial_bpm,
+        tempoName="Detected tempo",
+    )
     track = song.tracks[0]
     tuning_name = "BEADG" if len(strings) == 5 else "EADG"
     track.name = f"Bass ({len(strings)}-string {tuning_name})"
