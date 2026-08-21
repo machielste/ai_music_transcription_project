@@ -1,8 +1,9 @@
-"""Phrase-level string and fret selection for five-string bass."""
+"""Monophonic-first string, fret, and hand-position optimization for bass."""
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections import Counter, defaultdict
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 # Guitar Pro numbers strings from highest to lowest.
@@ -14,6 +15,9 @@ BEADG_STRINGS: tuple[tuple[int, int], ...] = (
     (5, 23),  # B0
 )
 EADG_STRINGS: tuple[tuple[int, int], ...] = BEADG_STRINGS[:-1]
+
+_HAND_SPAN_FRETS = 4
+_REPEATED_PHRASE_NOTES = 6
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,7 +31,7 @@ class FingeringEvent:
 
 @dataclass(frozen=True, slots=True)
 class FingeringCandidate:
-    """One playable location for a pitch."""
+    """One playable string/fret location for a pitch."""
 
     string: int
     fret: int
@@ -35,7 +39,7 @@ class FingeringCandidate:
 
 @dataclass(frozen=True, slots=True)
 class FingeringProfile:
-    """Weights controlling phrase-level fingering preferences."""
+    """Weights controlling the shared ergonomic model."""
 
     fret_weight: float
     high_fret_weight: float
@@ -44,103 +48,71 @@ class FingeringProfile:
     string_skip_weight: float
     open_string_penalty: float
     open_in_run_penalty: float
-    open_in_octave_penalty: float
     same_string_run_reward: float
     repeated_string_change_penalty: float
     octave_shape_reward: float
     nonstandard_octave_penalty: float
-    fast_transition_multiplier: float
+    fast_shift_weight: float
+    rest_shift_discount: float
+    hand_stretch_weight: float
     preferred_fret_min: int
     preferred_fret_max: int
 
 
+# These are the only profiles offered for new transcriptions. They share the
+# same ergonomic model; avoid_open changes only the strength of the open-string
+# preference. Old names are accepted below so existing saved results can still
+# be re-exported.
 FINGERING_PROFILES: dict[str, FingeringProfile] = {
     "balanced": FingeringProfile(
-        fret_weight=0.06,
+        fret_weight=0.04,
         high_fret_weight=0.30,
         position_shift_weight=0.75,
-        string_change_weight=1.25,
-        string_skip_weight=0.70,
-        open_string_penalty=0.15,
-        open_in_run_penalty=4.0,
-        open_in_octave_penalty=1.0,
-        same_string_run_reward=1.0,
-        repeated_string_change_penalty=3.0,
-        octave_shape_reward=2.0,
-        nonstandard_octave_penalty=1.5,
-        fast_transition_multiplier=1.5,
+        string_change_weight=0.90,
+        string_skip_weight=0.55,
+        open_string_penalty=0.50,
+        open_in_run_penalty=1.0,
+        same_string_run_reward=0.45,
+        repeated_string_change_penalty=2.0,
+        octave_shape_reward=1.5,
+        nonstandard_octave_penalty=0.75,
+        fast_shift_weight=1.8,
+        rest_shift_discount=3.0,
+        hand_stretch_weight=0.08,
         preferred_fret_min=1,
-        preferred_fret_max=12,
-    ),
-    "slap_funk": FingeringProfile(
-        fret_weight=0.04,
-        high_fret_weight=0.35,
-        position_shift_weight=0.85,
-        string_change_weight=1.50,
-        string_skip_weight=0.90,
-        open_string_penalty=0.35,
-        open_in_run_penalty=8.0,
-        open_in_octave_penalty=8.0,
-        same_string_run_reward=1.8,
-        repeated_string_change_penalty=4.0,
-        octave_shape_reward=4.0,
-        nonstandard_octave_penalty=3.0,
-        fast_transition_multiplier=1.8,
-        preferred_fret_min=2,
         preferred_fret_max=12,
     ),
     "avoid_open": FingeringProfile(
-        fret_weight=0.05,
+        fret_weight=0.04,
         high_fret_weight=0.30,
-        position_shift_weight=0.80,
-        string_change_weight=1.30,
-        string_skip_weight=0.75,
-        open_string_penalty=7.0,
-        open_in_run_penalty=7.0,
-        open_in_octave_penalty=7.0,
-        same_string_run_reward=1.0,
-        repeated_string_change_penalty=3.0,
-        octave_shape_reward=2.0,
-        nonstandard_octave_penalty=1.5,
-        fast_transition_multiplier=1.5,
+        position_shift_weight=0.75,
+        string_change_weight=0.90,
+        string_skip_weight=0.55,
+        open_string_penalty=6.0,
+        open_in_run_penalty=2.0,
+        same_string_run_reward=0.45,
+        repeated_string_change_penalty=2.0,
+        octave_shape_reward=1.5,
+        nonstandard_octave_penalty=0.75,
+        fast_shift_weight=1.8,
+        rest_shift_discount=3.0,
+        hand_stretch_weight=0.08,
         preferred_fret_min=1,
         preferred_fret_max=12,
     ),
-    "low_positions": FingeringProfile(
-        fret_weight=0.35,
-        high_fret_weight=0.70,
-        position_shift_weight=0.45,
-        string_change_weight=0.55,
-        string_skip_weight=0.40,
-        open_string_penalty=0.0,
-        open_in_run_penalty=0.25,
-        open_in_octave_penalty=0.0,
-        same_string_run_reward=0.25,
-        repeated_string_change_penalty=1.0,
-        octave_shape_reward=0.5,
-        nonstandard_octave_penalty=0.25,
-        fast_transition_multiplier=1.2,
-        preferred_fret_min=0,
-        preferred_fret_max=7,
-    ),
-    "compact": FingeringProfile(
-        fret_weight=0.04,
-        high_fret_weight=0.25,
-        position_shift_weight=1.50,
-        string_change_weight=0.90,
-        string_skip_weight=0.60,
-        open_string_penalty=0.50,
-        open_in_run_penalty=3.0,
-        open_in_octave_penalty=2.0,
-        same_string_run_reward=0.75,
-        repeated_string_change_penalty=3.0,
-        octave_shape_reward=2.0,
-        nonstandard_octave_penalty=1.5,
-        fast_transition_multiplier=2.0,
-        preferred_fret_min=2,
-        preferred_fret_max=14,
-    ),
 }
+
+_LEGACY_PROFILE_ALIASES: dict[str, str] = {
+    "slap_funk": "balanced",
+    "low_positions": "balanced",
+    "compact": "balanced",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class _SearchState:
+    candidate: FingeringCandidate
+    hand_position: int
 
 
 def generate_candidates(
@@ -162,32 +134,109 @@ def optimize_fingering(
     profile_name: str,
     *,
     strings: Sequence[tuple[int, int]] = BEADG_STRINGS,
+    seconds_per_slot: float = 0.0625,
+    enforce_repeated_phrases: bool = True,
 ) -> list[FingeringCandidate]:
-    """Choose a globally low-cost fingering path using dynamic programming."""
+    """Choose a playable path while tracking the fretting hand independently.
+
+    Open strings deliberately retain a hand-position state: playing fret zero
+    does not require moving the fretting hand to the nut. Exact repeated
+    pitch/rhythm phrases are locked to one candidate pattern in a second pass.
+    """
     if not events:
         return []
+    if seconds_per_slot <= 0:
+        raise ValueError("seconds_per_slot must be positive")
+
+    resolved_profile_name = _LEGACY_PROFILE_ALIASES.get(profile_name, profile_name)
     try:
-        profile = FINGERING_PROFILES[profile_name]
+        profile = FINGERING_PROFILES[resolved_profile_name]
     except KeyError as error:
-        available = ", ".join(sorted(FINGERING_PROFILES))
+        available = ", ".join((*sorted(FINGERING_PROFILES), *_LEGACY_PROFILE_ALIASES))
         raise ValueError(
             f"unknown fingering profile {profile_name!r}; choose from {available}"
         ) from error
 
+    states = _generate_search_states(events, strings)
+    base_path, _ = _search(events, states, profile, seconds_per_slot)
+    if not enforce_repeated_phrases:
+        return [state.candidate for state in base_path]
+
+    locks = _repeated_phrase_locks(events, base_path)
+    if not locks:
+        return [state.candidate for state in base_path]
+
+    locked_states = [
+        tuple(
+            state
+            for state in event_states
+            if index not in locks or state.candidate == locks[index]
+        )
+        for index, event_states in enumerate(states)
+    ]
+    repeated_path, _ = _search(events, locked_states, profile, seconds_per_slot)
+    return [state.candidate for state in repeated_path]
+
+
+def _generate_search_states(
+    events: Sequence[FingeringEvent],
+    strings: Sequence[tuple[int, int]],
+) -> list[tuple[_SearchState, ...]]:
     candidates = [generate_candidates(event.pitch, strings=strings) for event in events]
     for event, options in zip(events, candidates, strict=True):
         if not options:
-            raise ValueError(f"MIDI pitch {event.pitch} is outside five-string BEADG range")
+            tuning_name = "BEADG" if len(strings) == 5 else "EADG"
+            raise ValueError(f"MIDI pitch {event.pitch} is outside {tuning_name} range")
 
-    costs: list[list[float]] = []
-    backpointers: list[list[int]] = []
-    costs.append([_placement_cost(events, 0, candidate, profile) for candidate in candidates[0]])
-    backpointers.append([-1] * len(candidates[0]))
+    hand_positions = sorted(
+        {
+            hand_position
+            for options in candidates
+            for candidate in options
+            if candidate.fret > 0
+            for hand_position in _reachable_hand_positions(candidate.fret)
+        }
+    )
+    if not hand_positions:
+        hand_positions = [1]
+
+    states: list[tuple[_SearchState, ...]] = []
+    for options in candidates:
+        event_states: list[_SearchState] = []
+        for candidate in options:
+            positions = (
+                hand_positions
+                if candidate.fret == 0
+                else _reachable_hand_positions(candidate.fret)
+            )
+            event_states.extend(_SearchState(candidate, position) for position in positions)
+        states.append(tuple(event_states))
+    return states
+
+
+def _reachable_hand_positions(fret: int) -> range:
+    lowest = max(1, fret - (_HAND_SPAN_FRETS - 1))
+    return range(lowest, fret + 1)
+
+
+def _search(
+    events: Sequence[FingeringEvent],
+    states: Sequence[Sequence[_SearchState]],
+    profile: FingeringProfile,
+    seconds_per_slot: float,
+) -> tuple[list[_SearchState], float]:
+    if any(not event_states for event_states in states):
+        raise ValueError("fingering constraints removed every candidate for an event")
+
+    costs: list[list[float]] = [
+        [_placement_cost(events, 0, state, profile) for state in states[0]]
+    ]
+    backpointers: list[list[int]] = [[-1] * len(states[0])]
 
     for index in range(1, len(events)):
         current_costs: list[float] = []
         current_backpointers: list[int] = []
-        for current in candidates[index]:
+        for current in states[index]:
             alternatives = [
                 previous_cost
                 + _transition_cost(
@@ -196,88 +245,223 @@ def optimize_fingering(
                     events[index],
                     current,
                     profile,
+                    seconds_per_slot,
                 )
                 for previous_cost, previous in zip(
-                    costs[index - 1], candidates[index - 1], strict=True
+                    costs[index - 1], states[index - 1], strict=True
                 )
             ]
             best_previous = min(range(len(alternatives)), key=alternatives.__getitem__)
             current_costs.append(
-                alternatives[best_previous] + _placement_cost(events, index, current, profile)
+                alternatives[best_previous]
+                + _placement_cost(events, index, current, profile)
             )
             current_backpointers.append(best_previous)
         costs.append(current_costs)
         backpointers.append(current_backpointers)
 
     selected = min(range(len(costs[-1])), key=costs[-1].__getitem__)
-    path: list[FingeringCandidate] = []
+    total_cost = costs[-1][selected]
+    path: list[_SearchState] = []
     for index in range(len(events) - 1, -1, -1):
-        path.append(candidates[index][selected])
+        path.append(states[index][selected])
         selected = backpointers[index][selected]
     path.reverse()
-    return path
+    return path, total_cost
 
 
 def _placement_cost(
     events: Sequence[FingeringEvent],
     index: int,
-    candidate: FingeringCandidate,
+    state: _SearchState,
     profile: FingeringProfile,
 ) -> float:
+    candidate = state.candidate
+    if candidate.fret == 0:
+        cost = profile.open_string_penalty
+        if _is_scalar_neighbor(events, index):
+            cost += profile.open_in_run_penalty
+        return cost
+
     cost = candidate.fret * profile.fret_weight
     if candidate.fret > profile.preferred_fret_max:
         cost += (candidate.fret - profile.preferred_fret_max) * profile.high_fret_weight
-    elif 0 < candidate.fret < profile.preferred_fret_min:
+    elif candidate.fret < profile.preferred_fret_min:
         cost += (profile.preferred_fret_min - candidate.fret) * profile.high_fret_weight
-    if candidate.fret == 0:
-        cost += profile.open_string_penalty
-        neighboring_steps = (
-            index > 0 and abs(events[index].pitch - events[index - 1].pitch) <= 2
-        ) or (index + 1 < len(events) and abs(events[index + 1].pitch - events[index].pitch) <= 2)
-        if neighboring_steps:
-            cost += profile.open_in_run_penalty
-        neighboring_octave = (
-            index > 0 and abs(events[index].pitch - events[index - 1].pitch) == 12
-        ) or (index + 1 < len(events) and abs(events[index + 1].pitch - events[index].pitch) == 12)
-        if neighboring_octave:
-            cost += profile.open_in_octave_penalty
+    finger_offset = candidate.fret - state.hand_position
+    cost += finger_offset * profile.hand_stretch_weight
     return cost
+
+
+def _is_scalar_neighbor(events: Sequence[FingeringEvent], index: int) -> bool:
+    pitch = events[index].pitch
+    neighboring_intervals = []
+    if index > 0:
+        neighboring_intervals.append(abs(pitch - events[index - 1].pitch))
+    if index + 1 < len(events):
+        neighboring_intervals.append(abs(events[index + 1].pitch - pitch))
+    return any(0 < interval <= 2 for interval in neighboring_intervals)
 
 
 def _transition_cost(
     previous_event: FingeringEvent,
-    previous: FingeringCandidate,
+    previous: _SearchState,
     current_event: FingeringEvent,
-    current: FingeringCandidate,
+    current: _SearchState,
     profile: FingeringProfile,
+    seconds_per_slot: float,
 ) -> float:
-    fret_shift = abs(current.fret - previous.fret)
-    string_distance = abs(current.string - previous.string)
-    cost = fret_shift * profile.position_shift_weight
+    position_shift = abs(current.hand_position - previous.hand_position)
+    string_distance = abs(current.candidate.string - previous.candidate.string)
+    onset_seconds = max(
+        seconds_per_slot,
+        (current_event.start_slot - previous_event.start_slot) * seconds_per_slot,
+    )
+    rest_seconds = max(
+        0.0,
+        (current_event.start_slot - previous_event.end_slot) * seconds_per_slot,
+    )
+
+    rapid_fraction = max(0.0, (0.30 - onset_seconds) / 0.30)
+    timing_multiplier = 1.0 + rapid_fraction * profile.fast_shift_weight
+    rest_discount = 1.0 + rest_seconds * profile.rest_shift_discount
+    cost = (
+        position_shift
+        * profile.position_shift_weight
+        * timing_multiplier
+        / rest_discount
+    )
+
+    if position_shift:
+        frets_per_second = position_shift / onset_seconds
+        if frets_per_second > 18.0:
+            cost += (frets_per_second - 18.0) ** 2 * 0.02
+
     if string_distance:
-        cost += profile.string_change_weight
-        cost += max(0, string_distance - 1) * profile.string_skip_weight
+        string_cost = profile.string_change_weight
+        string_cost += max(0, string_distance - 1) * profile.string_skip_weight
+        cost += string_cost * (1.0 + rapid_fraction * 0.35)
 
     interval = current_event.pitch - previous_event.pitch
-    if abs(interval) <= 2 and string_distance == 0:
+    if 0 < abs(interval) <= 2 and string_distance == 0:
         cost -= profile.same_string_run_reward
     if interval == 0 and string_distance:
         cost += profile.repeated_string_change_penalty
 
-    if abs(interval) == 12:
-        lower, higher = (previous, current) if interval > 0 else (current, previous)
-        conventional_octave = higher.string == lower.string - 2 and higher.fret == lower.fret + 2
+    if (
+        0 < abs(interval) <= 2
+        and string_distance
+        and (previous.candidate.fret == 0 or current.candidate.fret == 0)
+    ):
+        cost += profile.open_in_run_penalty
+
+    if (
+        abs(interval) == 12
+        and previous.candidate.fret > 0
+        and current.candidate.fret > 0
+    ):
+        lower, higher = (
+            (previous.candidate, current.candidate)
+            if interval > 0
+            else (current.candidate, previous.candidate)
+        )
+        conventional_octave = (
+            higher.string == lower.string - 2
+            and higher.fret == lower.fret + 2
+        )
         if conventional_octave:
             cost -= profile.octave_shape_reward
         else:
             cost += profile.nonstandard_octave_penalty
-
-    # One slot is a 32nd note. Fast passages magnify awkward movement.
-    slot_gap = max(0, current_event.start_slot - previous_event.start_slot)
-    if slot_gap <= 4:
-        movement_cost = (
-            fret_shift * profile.position_shift_weight
-            + string_distance * profile.string_change_weight
-        )
-        cost += movement_cost * (profile.fast_transition_multiplier - 1.0)
     return cost
+
+
+def _repeated_phrase_locks(
+    events: Sequence[FingeringEvent],
+    path: Sequence[_SearchState],
+) -> dict[int, FingeringCandidate]:
+    phrase_length = _REPEATED_PHRASE_NOTES
+    if len(events) < phrase_length * 2:
+        return {}
+    if len({event.start_slot for event in events}) != len(events):
+        return {}
+
+    occurrences: defaultdict[tuple[tuple[int, int, int], ...], list[int]] = defaultdict(list)
+    for start in range(len(events) - phrase_length + 1):
+        key = _phrase_key(events, start, phrase_length)
+        if len({token[0] for token in key}) >= 2:
+            occurrences[key].append(start)
+
+    parents = list(range(len(events)))
+
+    def find(index: int) -> int:
+        while parents[index] != index:
+            parents[index] = parents[parents[index]]
+            index = parents[index]
+        return index
+
+    def union(left: int, right: int) -> None:
+        left_root = find(left)
+        right_root = find(right)
+        if left_root != right_root:
+            parents[right_root] = left_root
+
+    for starts in occurrences.values():
+        if len(starts) < 2:
+            continue
+        reference = starts[0]
+        for start in starts[1:]:
+            for offset in range(phrase_length):
+                union(reference + offset, start + offset)
+
+    equivalent_indices: defaultdict[int, list[int]] = defaultdict(list)
+    for index in range(len(events)):
+        equivalent_indices[find(index)].append(index)
+
+    locks: dict[int, FingeringCandidate] = {}
+    for indices in equivalent_indices.values():
+        if len(indices) < 2:
+            continue
+        counts = Counter(path[index].candidate for index in indices)
+        canonical = min(
+            counts,
+            key=lambda candidate: (
+                -counts[candidate],
+                candidate.fret,
+                candidate.string,
+            ),
+        )
+        locks.update(dict.fromkeys(indices, canonical))
+    return locks
+
+
+def _phrase_key(
+    events: Sequence[FingeringEvent],
+    start: int,
+    length: int,
+) -> tuple[tuple[int, int, int], ...]:
+    return tuple(
+        (
+            event.pitch,
+            event.end_slot - event.start_slot,
+            (
+                events[index + 1].start_slot - event.start_slot
+                if index + 1 < start + length
+                else 0
+            ),
+        )
+        for index, event in enumerate(
+            events[start : start + length],
+            start=start,
+        )
+    )
+
+
+def normalize_profile_name(profile_name: str) -> str:
+    """Map a saved legacy profile name to a currently supported policy."""
+    return _LEGACY_PROFILE_ALIASES.get(profile_name, profile_name)
+
+
+def supported_profile_names() -> Mapping[str, FingeringProfile]:
+    """Return the profiles intended for new user selections."""
+    return FINGERING_PROFILES

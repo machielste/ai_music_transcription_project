@@ -39,11 +39,7 @@ _RAW_NOTE_TYPES = [
 
 _FINGERING_OPTIONS = {
     "Balanced (recommended)": "balanced",
-    "Slap / funk": "slap_funk",
-    "Avoid open strings": "avoid_open",
-    "Prefer low positions": "low_positions",
-    "Compact hand position": "compact",
-    "Legacy lowest fret (optimizer off)": None,
+    "Punish open strings": "avoid_open",
 }
 
 

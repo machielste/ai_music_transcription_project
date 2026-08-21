@@ -33,7 +33,7 @@ def test_comparison_uses_final_fingering_timelines_for_every_profile() -> None:
     document = build_comparison_document(
         notes,
         _grid(),
-        profiles=("balanced", "slap_funk", "legacy"),
+        profiles=("balanced", "avoid_open", "legacy"),
     )
 
     assert document["reference_profile"] == "balanced"
@@ -48,13 +48,14 @@ def test_comparison_uses_final_fingering_timelines_for_every_profile() -> None:
     assert isinstance(strategies, list)
     assert [strategy["profile"] for strategy in strategies] == [
         "balanced",
-        "slap_funk",
+        "avoid_open",
         "legacy",
     ]
     assert [
         (note["string"], note["fret"])
         for note in strategies[1]["notes"]
     ] == [(3, 5), (3, 4), (3, 2)]
+    assert strategies[0]["metrics"]["repeated_phrase_inconsistencies"] == 0
     assert strategies[2]["notes"][0]["fret"] == 0
     assert document["playback_notes"] == [
         {"pitch": 38, "start_seconds": 0.0, "end_seconds": 0.125},
@@ -103,6 +104,7 @@ def test_packaged_highway_ui_is_available() -> None:
     assert "stringPosition" in html
     assert "stringCount - note.string" in html
     assert "comparison.strings.slice().reverse()" in html
+    assert "repeat mismatches" in html
     expected_colors = (
         "const STRING_COLORS = "
         "['#f28c28', '#3f8cff', '#f2d23c', '#ef4545', '#168a8a']"

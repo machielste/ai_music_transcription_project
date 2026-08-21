@@ -99,7 +99,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--fingering-profile",
         choices=(*FINGERING_PROFILES, "legacy"),
         default="balanced",
-        help="phrase-level fingering style, or 'legacy' to disable optimization",
+        help="hand-position/open-string policy, or 'legacy' to disable optimization",
     )
 
     debug_parser = subparsers.add_parser("debug", help="open interactive debugging tools")

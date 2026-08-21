@@ -6,6 +6,7 @@ import json
 import mimetypes
 import threading
 import webbrowser
+from collections import defaultdict
 from collections.abc import Sequence
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
@@ -25,19 +26,13 @@ from bass_transcriber.tab import (
 
 DEFAULT_DEBUG_PROFILES: tuple[str, ...] = (
     "balanced",
-    "slap_funk",
     "avoid_open",
-    "low_positions",
-    "compact",
     "legacy",
 )
 
 _PROFILE_LABELS = {
     "balanced": "Balanced",
-    "slap_funk": "Slap / funk",
     "avoid_open": "Avoid open strings",
-    "low_positions": "Low positions",
-    "compact": "Compact movement",
     "legacy": "Legacy lowest fret",
 }
 
@@ -250,7 +245,37 @@ def _timeline_metrics(notes: Sequence[ResolvedTabNote]) -> dict[str, int]:
         "string_skips": string_skips,
         "open_strings": sum(note.fret == 0 for note in notes),
         "max_fret": max((note.fret for note in notes), default=0),
+        "repeated_phrase_inconsistencies": _repeated_phrase_inconsistencies(notes),
     }
+
+
+def _repeated_phrase_inconsistencies(notes: Sequence[ResolvedTabNote]) -> int:
+    phrase_length = 6
+    phrases: defaultdict[
+        tuple[tuple[int, int, int], ...],
+        list[tuple[tuple[int, int], ...]],
+    ] = defaultdict(list)
+    for start in range(len(notes) - phrase_length + 1):
+        phrase = notes[start : start + phrase_length]
+        key = tuple(
+            (
+                note.pitch,
+                note.end_slot - note.start_slot,
+                (
+                    phrase[offset + 1].start_slot - note.start_slot
+                    if offset + 1 < phrase_length
+                    else 0
+                ),
+            )
+            for offset, note in enumerate(phrase)
+        )
+        if len({pitch for pitch, _, _ in key}) < 2:
+            continue
+        phrases[key].append(tuple((note.string, note.fret) for note in phrase))
+    return sum(
+        len(fingerings) > 1 and len(set(fingerings)) > 1
+        for fingerings in phrases.values()
+    )
 
 
 class _FingeringDebugServer(ThreadingHTTPServer):

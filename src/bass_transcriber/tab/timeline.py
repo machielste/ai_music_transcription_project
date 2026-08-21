@@ -92,8 +92,34 @@ def build_fingering_timeline(
     if profile_name is None:
         fingerings = [_choose_fingering(event.pitch, strings) for event in events]
     else:
-        optimized = optimize_fingering(events, profile_name, strings=strings)
-        fingerings = [(choice.string, choice.fret) for choice in optimized]
+        # Bass is overwhelmingly monophonic. Optimize the lowest note at each
+        # onset as the musical backbone, then resolve the exceptional double-
+        # stop/chord locally without allowing it to distort the main path.
+        indexed_onset_groups = [
+            list(group)
+            for _, group in groupby(enumerate(events), key=lambda item: item[1].start_slot)
+        ]
+        backbone_indices = [
+            min(group, key=lambda item: (item[1].pitch, item[0]))[0]
+            for group in indexed_onset_groups
+        ]
+        backbone_events = [events[index] for index in backbone_indices]
+        optimized = optimize_fingering(
+            backbone_events,
+            profile_name,
+            strings=strings,
+            seconds_per_slot=period_seconds / SUBDIVISIONS_PER_BEAT,
+        )
+        optimized_by_index = dict(zip(backbone_indices, optimized, strict=True))
+        fingerings = [
+            (
+                optimized_by_index[index].string,
+                optimized_by_index[index].fret,
+            )
+            if index in optimized_by_index
+            else _choose_fingering(event.pitch, strings)
+            for index, event in enumerate(events)
+        ]
     resolved = [
         ResolvedTabNote(event.pitch, event.start_slot, event.end_slot, string, fret)
         for event, (string, fret) in zip(events, fingerings, strict=True)

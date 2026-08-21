@@ -411,7 +411,8 @@
         const metricValues = [
           `fret travel ${strategy.metrics.fret_travel}`,
           `string changes ${strategy.metrics.string_changes}`,
-          `open ${strategy.metrics.open_strings}`
+          `open ${strategy.metrics.open_strings}`,
+          `repeat mismatches ${strategy.metrics.repeated_phrase_inconsistencies}`
         ];
         metricValues.forEach(value => {
           const span = document.createElement('span');

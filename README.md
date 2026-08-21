@@ -144,9 +144,13 @@ fresh bass attack is preserved; a boundary without one is merged into a sustaine
 note. The option is off by default and its decisions are retained in the debug log
 under `postprocessing`.
 
-The **Fingering style** selector applies an optional phrase-level optimizer after
-rhythm quantization. Choose **Legacy lowest fret** to bypass that stage and retain
-the original per-note behavior.
+The **Fingering style** selector applies a monophonic-first optimizer after
+rhythm quantization. **Balanced** tracks the fretting-hand position separately
+from the played fret, uses real elapsed time and rests when pricing shifts, and
+keeps exact repeated six-note pitch/rhythm phrases in one consistent fingering.
+Open strings do not force the fretting hand back to the nut. Choose **Punish open
+strings** for the same ergonomic model with a strong preference for fretted
+alternatives.
 
 After processing completes, choose **Open fingering comparison** to launch the
 synchronized perspective-highway view for the retained transcription. Compare
@@ -167,7 +171,8 @@ and reports the exact decision in both the completion warning and debug JSON.
 
 ## Fingering strategy debugger
 
-Compare every fingering profile in synchronized perspective note highways:
+Compare the two fingering policies and the legacy lowest-fret baseline in
+synchronized perspective note highways:
 
 ```powershell
 uv run bass-transcriber debug fingerings outputs\song.notes.json `
@@ -190,7 +195,7 @@ or select a subset and comparison order explicitly:
 ```powershell
 uv run bass-transcriber debug fingerings outputs\song.notes.json `
   --rhythm outputs\song.rhythm.json `
-  --profiles balanced slap_funk legacy
+  --profiles balanced avoid_open legacy
 ```
 
 The source audio defaults to the path recorded in the notes JSON. Pass `--audio`
