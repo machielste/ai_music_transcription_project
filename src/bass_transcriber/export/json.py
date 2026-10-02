@@ -18,6 +18,8 @@ class NotesDocument:
     model_size: str
     notes: list[BassNote]
     instrument_mode: str = "unspecified"
+    transcription_audio: Path | None = None
+    separation: dict[str, object] | None = None
 
 
 def write_notes_json(
@@ -27,6 +29,8 @@ def write_notes_json(
     source: Path,
     model_size: str,
     instrument_mode: str = "unspecified",
+    transcription_audio: Path | None = None,
+    separation: dict[str, object] | None = None,
 ) -> None:
     """Write raw notes and provenance in a stable, inspectable format."""
     document = {
@@ -39,6 +43,10 @@ def write_notes_json(
         },
         "notes": [asdict(note) for note in notes],
     }
+    if transcription_audio is not None:
+        document["transcription_audio"] = str(transcription_audio.resolve())
+    if separation is not None:
+        document["separation"] = separation
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
 
@@ -88,5 +96,13 @@ def read_notes_json(input_path: Path) -> NotesDocument:
             cast(str, transcriber["instrument_mode"])
             if isinstance(transcriber.get("instrument_mode"), str)
             else "unspecified"
+        ),
+        transcription_audio=(
+            Path(cast(str, payload["transcription_audio"]))
+            if isinstance(payload.get("transcription_audio"), str) else None
+        ),
+        separation=(
+            cast(dict[str, object], payload["separation"])
+            if isinstance(payload.get("separation"), dict) else None
         ),
     )

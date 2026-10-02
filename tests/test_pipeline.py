@@ -536,6 +536,7 @@ def test_process_song_can_reuse_raw_model_output_and_still_postprocess(
         raise AssertionError("MuScriptor must not run when raw notes are selected")
 
     monkeypatch.setattr(pipeline, "transcribe_bass", unexpected_transcription)
+    monkeypatch.setattr(pipeline, "separate_bass_audio", unexpected_transcription)
     monkeypatch.setattr(pipeline, "detect_rhythm", lambda *args, **kwargs: rhythm)
 
     class FakeCleanup:
@@ -572,6 +573,7 @@ def test_process_song_can_reuse_raw_model_output_and_still_postprocess(
         source,
         destination,
         raw_notes_input=raw_input,
+        separate_bass=True,
         merge_sustained_retriggers=True,
         fingering_profile="compact",
     )
@@ -590,3 +592,101 @@ def test_process_song_can_reuse_raw_model_output_and_still_postprocess(
     assert debug_document["configuration"]["transcription_mode"] == "reused_raw_output"
     assert debug_document["transcription"]["skipped"] is True
     assert debug_document["postprocessing"]["merged_boundary_count"] == 1
+
+
+def test_separation_routes_stem_to_transcription_and_cleanup_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "song.wav"
+    source.write_bytes(b"source")
+    destination = tmp_path / "out"
+    notes = [BassNote(38, 0.0, 0.25, "electric_bass")]
+    rhythm = RhythmGrid("test", 120.0, 4, 0.0, (0.0, 0.5), 0.0)
+    inputs: dict[str, Path] = {}
+    monkeypatch.setattr(pipeline.shutil, "which", lambda name: "ffmpeg")
+    monkeypatch.setattr(pipeline, "_convert_to_wav", lambda f, s, o: o.write_bytes(b"mix"))
+
+    def separate(audio: Path, output: Path, **kwargs: object) -> dict[str, object]:
+        assert kwargs["original_source"] == source
+        inputs["separation"] = audio
+        output.write_bytes(b"stem")
+        return {"model": "test", "source_sha256": pipeline.file_sha256(source),
+                "stem_sha256": pipeline.file_sha256(output)}
+
+    def transcribe(audio: Path, **kwargs: object) -> list[BassNote]:
+        inputs["transcription"] = audio
+        assert kwargs["instrument"] == "electric_bass"
+        return notes
+
+    def detect(audio: Path, **kwargs: object) -> RhythmGrid:
+        inputs["rhythm"] = audio
+        return rhythm
+
+    class Cleanup:
+        @property
+        def notes(self) -> tuple[BassNote, ...]:
+            return tuple(notes)
+
+        def diagnostics(self) -> dict[str, object]:
+            return {"enabled": True}
+
+    def cleanup(audio: Path, ns: list[BassNote]) -> Cleanup:
+        inputs["cleanup"] = audio
+        return Cleanup()
+
+    def tonelib(gp5: Path, audio: Path, output: Path) -> None:
+        inputs["backing"] = audio
+        output.write_bytes(b"song")
+
+    monkeypatch.setattr(pipeline, "separate_bass_audio", separate)
+    monkeypatch.setattr(pipeline, "transcribe_bass", transcribe)
+    monkeypatch.setattr(pipeline, "detect_rhythm", detect)
+    monkeypatch.setattr(pipeline, "merge_false_retriggers", cleanup)
+    monkeypatch.setattr(pipeline, "write_tonelib_song", tonelib)
+    monkeypatch.setattr(pipeline, "write_gp5", lambda output, *a, **k: (
+        output.write_bytes(b"gp5"), GP5ExportResult(1, ()),
+    )[1])
+    result = pipeline.process_song(
+        source, destination, separate_bass=True, merge_sustained_retriggers=True,
+        generate_tonelib=True,
+    )
+    assert inputs["transcription"] == inputs["cleanup"] == result.bass_stem
+    assert inputs["rhythm"] == inputs["separation"]
+    assert inputs["backing"] == source
+    document = json.loads(result.raw_notes.read_text())
+    assert document["source"] == str(source.resolve())
+    assert document["transcription_audio"] == str(result.bass_stem.resolve())
+    assert document["separation"]["model"] == "test"
+    # Reuse must skip both models and retain a verified stem for cleanup.
+    monkeypatch.setattr(pipeline, "separate_bass_audio", lambda *a, **k: pytest.fail("separation"))
+    monkeypatch.setattr(pipeline, "transcribe_bass", lambda *a, **k: pytest.fail("transcription"))
+    reused = pipeline.process_song(
+        source, tmp_path / "reused", raw_notes_input=result.raw_notes,
+        separate_bass=True, merge_sustained_retriggers=True, generate_gp5=False,
+    )
+    assert reused.bass_stem.is_file()
+    assert inputs["cleanup"] == reused.bass_stem
+
+
+def test_separation_failure_stops_pipeline_and_retains_debug_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "song.wav"
+    source.write_bytes(b"audio")
+    destination = tmp_path / "out"
+    monkeypatch.setattr(pipeline.shutil, "which", lambda name: "ffmpeg")
+    monkeypatch.setattr(pipeline, "_convert_to_wav", lambda f, s, o: o.write_bytes(b"mix"))
+
+    def fail(*args: object, **kwargs: object) -> dict[str, object]:
+        raise RuntimeError("separator unavailable")
+
+    monkeypatch.setattr(pipeline, "separate_bass_audio", fail)
+    monkeypatch.setattr(pipeline, "transcribe_bass", lambda *a, **k: pytest.fail("transcription"))
+    monkeypatch.setattr(pipeline, "detect_rhythm", lambda *a, **k: pytest.fail("rhythm"))
+    with pytest.raises(RuntimeError, match="separator unavailable"):
+        pipeline.process_song(source, destination, separate_bass=True)
+    debug = json.loads((destination / "song.bass.debug.json").read_text())
+    assert debug["status"] == "failed"
+    assert any(s["name"] == "bass_separation" and s["status"] == "failed"
+               for s in debug["stages"])
+    assert not (destination / "song.bass.raw.notes.json").exists()

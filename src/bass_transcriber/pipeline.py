@@ -21,6 +21,8 @@ from bass_transcriber.export.tonelib import write_tonelib_song
 from bass_transcriber.models import BassInstrument, BassNote, RhythmGrid
 from bass_transcriber.postprocess import merge_false_retriggers
 from bass_transcriber.rhythm import detect_rhythm
+from bass_transcriber.separation import file_sha256
+from bass_transcriber.separation import separate_bass as separate_bass_audio
 from bass_transcriber.tab import (
     BEADG_STRINGS,
     EADG_STRINGS,
@@ -51,6 +53,7 @@ class ProcessingResult:
     fingering_draft: Path | None = None
     reused_raw_notes: bool = False
     tonelib_song: Path | None = None
+    bass_stem: Path | None = None
 
 
 def output_path_for(source: Path, destination: Path) -> Path:
@@ -79,6 +82,7 @@ def process_song(
     *,
     copy_source: bool = False,
     force_electric_bass: bool = False,
+    separate_bass: bool = False,
     merge_sustained_retriggers: bool = False,
     raw_notes_input: Path | None = None,
     fingering_profile: str | None = "balanced",
@@ -100,14 +104,16 @@ def process_song(
     final_fingering_draft = fingering_path_for(source, destination)
     debug_target = final_output if generate_gp5 else final_fingering_draft
     ffmpeg = shutil.which("ffmpeg")
-    instrument: BassInstrument | None = "electric_bass" if force_electric_bass else None
-    instrument_mode = "electric_bass" if force_electric_bass else "auto"
+    conditioned = force_electric_bass or separate_bass
+    instrument: BassInstrument | None = "electric_bass" if conditioned else None
+    instrument_mode = "electric_bass" if conditioned else "auto"
     debug_run = DebugRun(
         source,
         debug_target,
         configuration={
             "copy_source": copy_source,
             "force_electric_bass": force_electric_bass,
+            "separate_bass": separate_bass,
             "merge_sustained_retriggers": merge_sustained_retriggers,
             "raw_notes_input": (
                 str(raw_notes_input.resolve()) if raw_notes_input is not None else None
@@ -128,6 +134,9 @@ def process_song(
     )
     transcription_trace = TranscriptionTrace()
     reused_raw_notes = raw_notes_input is not None
+    bass_stem: Path | None = None
+    separation_metadata: dict[str, object] | None = None
+    transcription_audio: Path | None = None
 
     try:
         if ffmpeg is None:
@@ -146,6 +155,31 @@ def process_song(
                 with debug_run.stage("raw_note_import"):
                     raw_document = read_notes_json(raw_notes_input)
                     raw_notes = raw_document.notes
+                separation_metadata = raw_document.separation
+                transcription_audio = raw_document.transcription_audio
+                # Never apply an unrelated or modified stem to a reused transcription.
+                candidate = transcription_audio
+                if (
+                    separation_metadata is not None
+                    and candidate is not None and candidate.is_file()
+                    and separation_metadata.get("source_sha256") == file_sha256(source)
+                    and separation_metadata.get("stem_sha256") == file_sha256(candidate)
+                ):
+                    bass_stem = destination / f"{source.stem}.bass.stem.wav"
+                    if candidate.resolve() != bass_stem.resolve():
+                        shutil.copy2(candidate, bass_stem)
+                    transcription_audio = bass_stem
+                elif separation_metadata is not None and merge_sustained_retriggers:
+                    debug_run.add_warning(
+                        "Saved bass stem is missing or does not match the source; "
+                        "spectral cleanup uses the original audio.",
+                        category="reused_stem_unavailable",
+                    )
+                debug_run.set_section("separation", {
+                    "skipped": True, "reason": "reused_raw_output",
+                    "provenance": separation_metadata,
+                    "retained_stem": str(bass_stem.resolve()) if bass_stem else None,
+                })
                 model_size = raw_document.model_size
                 raw_instrument_mode = raw_document.instrument_mode
                 debug_run.set_section(
@@ -160,8 +194,21 @@ def process_song(
                     },
                 )
             else:
+                transcription_wav = wav
+                if separate_bass:
+                    _notify(progress, 0.03, "Separating bass with BS-RoFormer SW")
+                    bass_stem = destination / f"{source.stem}.bass.stem.wav"
+                    with debug_run.stage("bass_separation"):
+                        separation_metadata = separate_bass_audio(
+                            wav, bass_stem, original_source=source,
+                        )
+                    debug_run.set_section("separation", separation_metadata)
+                    transcription_wav = bass_stem
+                    transcription_audio = bass_stem
+                else:
+                    debug_run.set_section("separation", {"enabled": False})
                 mode_description = (
-                    " with electric-bass conditioning" if force_electric_bass else ""
+                    " with electric-bass conditioning" if conditioned else ""
                 )
                 _notify(progress, 0.05, f"Loading MuScriptor large model{mode_description}")
 
@@ -175,7 +222,7 @@ def process_song(
 
                 with debug_run.stage("transcription"):
                     raw_notes = transcribe_bass(
-                        wav,
+                        transcription_wav,
                         size="large",
                         instrument=instrument,
                         device="cuda",
@@ -193,6 +240,8 @@ def process_song(
                     source=source,
                     model_size=model_size,
                     instrument_mode=raw_instrument_mode,
+                    transcription_audio=transcription_audio,
+                    separation=separation_metadata,
                 )
 
             _notify(progress, 0.80, "Detecting tempo and beat grid")
@@ -211,7 +260,7 @@ def process_song(
             if merge_sustained_retriggers:
                 _notify(progress, 0.88, "Checking repeated notes for fresh bass attacks")
                 with debug_run.stage("spectral_retrigger_cleanup"):
-                    cleanup = merge_false_retriggers(wav, raw_notes)
+                    cleanup = merge_false_retriggers(bass_stem or wav, raw_notes)
                     notes = list(cleanup.notes)
                 debug_run.set_section("postprocessing", cleanup.diagnostics())
             else:
@@ -374,6 +423,7 @@ def process_song(
                 "gp5": str(final_output.resolve()) if generate_gp5 else None,
                 "tonelib_song": str(final_song.resolve()) if final_song and generate_gp5 else None,
                 "reused_raw_notes": reused_raw_notes,
+                "bass_stem": str(bass_stem.resolve()) if bass_stem else None,
             },
         )
         debug_run.finish_success()
@@ -396,6 +446,7 @@ def process_song(
             fingering_draft=final_fingering_draft,
             reused_raw_notes=reused_raw_notes,
             tonelib_song=final_song,
+            bass_stem=bass_stem,
         )
     except Exception as error:
         if not reused_raw_notes:

@@ -4,6 +4,8 @@ A local Python project for converting songs into synchronized bass tablature tha
 
 The refined design and V1 scope are documented in [v1plan.md](v1plan.md).
 
+Observed limitations and deferred fixes are tracked in [KNOWN_ISSUES.md](KNOWN_ISSUES.md).
+
 ## Disclosure
 
 THIS REPO INCLUDES AI ASSISTED CODE
@@ -165,7 +167,8 @@ through **Show more options**. Direct integration into the newer menu requires a
 packaged shell extension. The menu uses this repository's Python environment;
 reinstall it after moving the repository or recreating the environment.
 Existing CUDA, FFmpeg, and model-access prerequisites still apply. Explorer jobs
-use the large model, automatic bass classification, and spectral retrigger cleanup.
+separate bass using BS-RoFormer SW, transcribe it with the large model and
+electric-bass conditioning, and apply spectral retrigger cleanup to the bass stem.
 
 Remove the menu with:
 
@@ -190,7 +193,7 @@ uv run bass-transcriber-gui
 
 Select a music file and destination folder, then choose **Generate fingering
 draft**. Each run gets its own song/settings folder inside the selected destination.
-The UI runs the large-model automatic-instrument pipeline in the
+The UI runs bass separation and the large-model electric-bass-conditioned pipeline in the
 background and writes an editable `<song>.bass.fingering.json`, a reusable
 `<song>.bass.raw.notes.json` model artifact, and a machine-readable
 `<song>.bass.debug.json` diagnostic log into the selected folder. Open the draft
@@ -213,10 +216,43 @@ fingering, and comparison preparation. The selected music file is
 authoritative, so the original audio path stored inside a moved raw artifact does
 not need to remain valid.
 
-Enable **Force electric-bass instrument conditioning** to test MuScriptor's hard
-electric-bass constraint. It is experimental because non-bass parts may be emitted
-as bass notes. The option is off by default, preserving automatic instrument
-classification.
+**Separate bass before transcription (recommended)** is enabled by default.
+Turn it off to use the original full-mix transcription with automatic instrument
+classification. The separate **Force electric-bass conditioning without
+separation** option is experimental because non-bass parts may be emitted as bass
+notes. Separation always selects electric-bass conditioning automatically.
+
+### Bass stem separation
+
+The pinned BS-RoFormer SW six-stem model runs in a separate worker process, which
+exits before MuScriptor loads so the two models do not occupy GPU memory together.
+The first run downloads approximately 700 MB of weights into the separator's
+standard cache (`~/.cache/bs-roformer-infer`). Both checkpoint and configuration
+are checked against the tested SHA256 hashes. No song audio is uploaded.
+
+Normal runs retain only `<song>.bass.stem.wav` (44.1 kHz stereo, floating point,
+without normalization), a `.separation.json` provenance sidecar and a
+`.separation.log`. Rhythm detection, synchronized playback and ToneLib backing
+audio continue to use the original recording. Spectral retrigger cleanup uses
+the stem. Raw notes preserve the original source plus the transcription audio
+path and separator metadata.
+
+Selecting existing raw notes skips both models. A saved stem is reused for
+spectral cleanup only when its hash and original-source hash match. If it is
+missing or mismatched, cleanup uses the original audio and records a warning in
+the debug log. Existing raw-note files without separator metadata still work.
+Separation failures stop the run and retain the worker log; they do not silently
+fall back to full-mix transcription.
+
+The lower-level CLI retains its existing full-mix default. Enable separation with:
+
+```powershell
+uv run bass-transcriber transcribe song.mp3 --model large --separate-bass
+```
+
+API callers opt in with `process_song(..., separate_bass=True)`. Desktop and
+Explorer runs enable separation by default. The near-silence carryover limitation
+in [KNOWN_ISSUES.md](KNOWN_ISSUES.md) remains unchanged.
 
 Enable **Merge false sustained-note retriggers using spectral attack detection**
 to inspect contiguous same-pitch sustained notes in a pitch-conditioned

@@ -41,6 +41,7 @@ def _package_versions() -> dict[str, str | None]:
         "soundfile",
         "pyguitarpro",
         "mido",
+        "bs-roformer-infer",
     )
     result: dict[str, str | None] = {}
     for package in packages:

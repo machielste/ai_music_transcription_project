@@ -83,6 +83,7 @@ def test_shell_job_generates_gp5_with_selected_settings(
     assert calls[0][2]["generate_gp5"] is True
     assert calls[0][2]["copy_source"] is True
     assert calls[0][2]["generate_tonelib"] is True
+    assert calls[0][2]["separate_bass"] is True
     assert [events.get_nowait()[0] for _ in range(events.qsize())] == ["folder", "done"]
 
 

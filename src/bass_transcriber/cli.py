@@ -20,6 +20,7 @@ from bass_transcriber.fingering_debug import (
 )
 from bass_transcriber.models import BassInstrument
 from bass_transcriber.rhythm import detect_rhythm
+from bass_transcriber.separation import separate_bass
 from bass_transcriber.tab import FINGERING_PROFILES
 from bass_transcriber.transcription.muscriptor import (
     MODEL_SIZES,
@@ -70,6 +71,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="use 'auto' to classify all instruments, then retain labelled bass events",
     )
     transcribe_parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
+    transcribe_parser.add_argument(
+        "--separate-bass", action="store_true",
+        help="separate and retain a bass WAV before electric-bass-conditioned transcription",
+    )
 
     export_parser = subparsers.add_parser("export", help="export a transcription artifact")
     export_subparsers = export_parser.add_subparsers(dest="export_format", required=True)
@@ -189,9 +194,23 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"Transcribing chunk {completed}/{total}", file=sys.stderr)
 
         instrument_mode = cast(str, args.instrument)
+        transcription_audio = audio
+        separation_metadata = None
+        if args.separate_bass:
+            print("Separating bass with BS-RoFormer SW", file=sys.stderr)
+            transcription_audio = output.with_name(
+                output.name.removesuffix(".notes.json") + ".bass.stem.wav"
+            )
+            try:
+                separation_metadata = separate_bass(
+                    audio, transcription_audio, device=cast(str, args.device),
+                )
+            except (RuntimeError, OSError) as error:
+                parser.error(str(error))
+            instrument_mode = "electric_bass"
         instrument = None if instrument_mode == "auto" else cast(BassInstrument, instrument_mode)
         notes = transcribe_bass(
-            audio,
+            transcription_audio,
             size=cast(ModelSize, args.model),
             instrument=instrument,
             device=cast(str, args.device),
@@ -203,6 +222,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             source=audio,
             model_size=cast(str, args.model),
             instrument_mode=instrument_mode,
+            transcription_audio=transcription_audio if args.separate_bass else None,
+            separation=separation_metadata,
         )
         print(f"Wrote {len(notes)} notes to {output}")
         return 0

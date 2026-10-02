@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 import sys
 from dataclasses import dataclass
+from importlib.metadata import PackageNotFoundError, version
 from typing import Literal
 
 from huggingface_hub import get_token
@@ -28,6 +29,7 @@ def collect_diagnostics() -> list[Diagnostic]:
         _check_executable("FFmpeg", "ffmpeg"),
         _check_torch(),
         _check_hugging_face_auth(),
+        _check_separator(),
     ]
     return checks
 
@@ -35,6 +37,21 @@ def collect_diagnostics() -> list[Diagnostic]:
 def has_errors(checks: list[Diagnostic]) -> bool:
     """Return whether any required prerequisite failed."""
     return any(check.status == "error" for check in checks)
+
+
+def _check_separator() -> Diagnostic:
+    from bass_transcriber.separation import PACKAGE_VERSION
+
+    try:
+        installed = version("bs-roformer-infer")
+    except PackageNotFoundError:
+        return Diagnostic("Bass separator", "error", "not installed; run 'uv sync'")
+    if installed != PACKAGE_VERSION:
+        return Diagnostic("Bass separator", "error", "unexpected version; run 'uv sync'")
+    return Diagnostic(
+        "Bass separator", "ok",
+        f"BS-RoFormer SW; bs-roformer-infer {installed}; weights cached on first use",
+    )
 
 
 def _check_executable(name: str, executable: str) -> Diagnostic:

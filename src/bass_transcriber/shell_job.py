@@ -39,6 +39,7 @@ def run_job(
             five_string=strings == 5,
             fingering_profile=profile,
             merge_sustained_retriggers=True,
+            separate_bass=True,
             generate_gp5=True,
             generate_tonelib=True,
             progress=lambda fraction, message: report.put(("progress", (fraction, message))),

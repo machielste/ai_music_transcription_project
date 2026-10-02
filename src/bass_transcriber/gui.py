@@ -55,6 +55,7 @@ class TranscriberApp:
         self.raw_notes_input = tk.StringVar()
         self.copy_source = tk.BooleanVar(value=False)
         self.force_electric_bass = tk.BooleanVar(value=False)
+        self.separate_bass = tk.BooleanVar(value=True)
         self.merge_sustained_retriggers = tk.BooleanVar(value=True)
         self.five_string = tk.BooleanVar(value=False)
         self.fingering_style = tk.StringVar(value="Balanced (recommended)")
@@ -102,11 +103,18 @@ class TranscriberApp:
         ttk.Label(
             frame,
             text="Large MuScriptor",
-        ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(10, 4))
+        ).grid(row=3, column=0, sticky="w", pady=(10, 4))
+        self.separate_bass_checkbox = ttk.Checkbutton(
+            frame, text="Separate bass before transcription (recommended)",
+            variable=self.separate_bass,
+        )
+        self.separate_bass_checkbox.grid(
+            row=3, column=1, columnspan=2, sticky="w", padx=10, pady=(10, 4),
+        )
 
         self.force_electric_checkbox = ttk.Checkbutton(
             frame,
-            text="Force electric-bass instrument conditioning (experimental), requires isolated bass track.",  # noqa: E501
+            text="Force electric-bass conditioning without separation (experimental)",
             variable=self.force_electric_bass,
         )
         self.force_electric_checkbox.grid(
@@ -201,6 +209,8 @@ class TranscriberApp:
         )
 
         self.raw_notes_input.trace_add("write", self._raw_notes_selection_changed)
+        self.separate_bass.trace_add("write", self._raw_notes_selection_changed)
+        self._raw_notes_selection_changed()
 
     def _choose_source(self) -> None:
         selected = filedialog.askopenfilename(title="Select music file", filetypes=_AUDIO_TYPES)
@@ -227,8 +237,12 @@ class TranscriberApp:
         if self.raw_notes_input.get().strip():
             self.force_electric_bass.set(False)
             self.force_electric_checkbox.state(["disabled"])
+            self.separate_bass_checkbox.state(["disabled"])
         else:
-            self.force_electric_checkbox.state(["!disabled"])
+            self.separate_bass_checkbox.state(["!disabled"])
+            self.force_electric_checkbox.state(
+                ["disabled"] if self.separate_bass.get() else ["!disabled"]
+            )
 
     def _start_processing(self) -> None:
         source = Path(self.source.get().strip())
@@ -277,6 +291,7 @@ class TranscriberApp:
                 raw_notes_input,
                 _FINGERING_OPTIONS[self.fingering_style.get()],
                 self.five_string.get(),
+                self.separate_bass.get(),
             ),
             daemon=True,
         )
@@ -435,6 +450,7 @@ class TranscriberApp:
         raw_notes_input: Path | None,
         fingering_profile: str | None,
         five_string: bool,
+        separate_bass: bool = True,
     ) -> None:
         def report(fraction: float, message: str) -> None:
             self.events.put(("progress", (fraction, message)))
@@ -445,6 +461,7 @@ class TranscriberApp:
                 destination,
                 copy_source=copy_source,
                 force_electric_bass=force_electric_bass,
+                separate_bass=separate_bass,
                 merge_sustained_retriggers=merge_sustained_retriggers,
                 raw_notes_input=raw_notes_input,
                 fingering_profile=fingering_profile,
@@ -503,8 +520,13 @@ class TranscriberApp:
                             else ""
                         )
                         + (
-                            "\nMuScriptor skipped: reused selected raw output"
+                            "\nSeparation and MuScriptor skipped: reused selected raw output"
                             if result.reused_raw_notes
+                            else ""
+                        )
+                        + (
+                            f"\nBass stem: {result.bass_stem.name}"
+                            if result.bass_stem is not None
                             else ""
                         )
                         + (
