@@ -102,6 +102,48 @@ uv run bass-transcriber --version
 
 ## Desktop interface
 
+### Windows Explorer right-click menu
+
+Install the menu for your Windows account from this repository (no administrator
+rights required):
+
+```powershell
+powershell -NoProfile -File .\scripts\windows-context-menu.ps1 install
+```
+
+Right-click an MP3, WAV, FLAC, OGG, or M4A file and choose **Generate bass
+tablature → 4-string bass (EADG)** or **5-string bass (BEADG)**, then click
+**Balanced** or **Punish open strings**. Generation starts immediately in a
+progress window and creates GP5, editable fingering JSON, raw notes, and diagnostics
+alongside a copy of the original music file
+in a separate folder inside this repository's `outputs` directory, for example
+`outputs/song.4-string.balanced/`. Repeating a run creates `.2`, `.3`, etc. folders
+and preserves previous results. The progress window has an **Open output folder**
+button. Closing it during generation minimizes it so the export can finish.
+Failed runs retain diagnostics and an `error.txt` file in their run folder.
+
+On Windows 11 this registry-based menu is in the classic menu, usually reached
+through **Show more options**. Direct integration into the newer menu requires a
+packaged shell extension. The menu uses this repository's Python environment;
+reinstall it after moving the repository or recreating the environment.
+Existing CUDA, FFmpeg, and model-access prerequisites still apply. Explorer jobs
+use the large model, automatic bass classification, and spectral retrigger cleanup.
+
+Remove the menu with:
+
+```powershell
+powershell -NoProfile -File .\scripts\windows-context-menu.ps1 uninstall
+```
+
+The PowerShell helper runs a temporary task as the signed-in user and removes it
+after installation or removal. This avoids an isolated registry view inherited
+from desktop automation hosts, which can otherwise make the menu visible to the
+installer but invisible to Explorer. The direct command
+`uv run python -m bass_transcriber.context_menu install` remains available when
+running from an ordinary terminal outside such an isolated host.
+
+### File-picker window
+
 Open the native file-picker interface with:
 
 ```powershell
@@ -109,7 +151,8 @@ uv run bass-transcriber-gui
 ```
 
 Select a music file and destination folder, then choose **Generate fingering
-draft**. The UI runs the large-model automatic-instrument pipeline in the
+draft**. Each run gets its own song/settings folder inside the selected destination.
+The UI runs the large-model automatic-instrument pipeline in the
 background and writes an editable `<song>.bass.fingering.json`, a reusable
 `<song>.bass.raw.notes.json` model artifact, and a machine-readable
 `<song>.bass.debug.json` diagnostic log into the selected folder. Open the draft

@@ -16,13 +16,12 @@ from bass_transcriber.fingering_debug import (
     FingeringDebugSession,
     start_fingering_debugger,
 )
+from bass_transcriber.output_folders import create_run_folder
 from bass_transcriber.pipeline import (
     ProcessingResult,
     debug_path_for,
     export_gp5_from_fingering_draft,
-    fingering_path_for,
     process_song,
-    raw_notes_path_for,
     rewrite_fingering_draft,
 )
 
@@ -249,28 +248,14 @@ class TranscriberApp:
                 "Select an existing .notes.json file or clear the optional field.",
             )
             return
-        fingering_draft = fingering_path_for(source, destination)
-        replacements = [fingering_draft] if fingering_draft.exists() else []
-        debug_log = debug_path_for(source, destination)
-        if debug_log.exists():
-            replacements.append(debug_log)
-        raw_notes_output = raw_notes_path_for(source, destination)
-        if raw_notes_output.exists() and raw_notes_output not in replacements:
-            replacements.append(raw_notes_output)
-        source_copy = destination / source.name
-        if (
-            self.copy_source.get()
-            and source.resolve() != source_copy.resolve()
-            and source_copy.exists()
-        ):
-            replacements.append(source_copy)
-        if replacements:
-            names = "\n".join(path.name for path in replacements)
-            if not messagebox.askyesno(
-                "Replace existing files?",
-                f"The following files already exist and will be replaced:\n\n{names}",
-            ):
-                return
+        try:
+            destination = create_run_folder(
+                source, destination, 5 if self.five_string.get() else 4,
+                _FINGERING_OPTIONS[self.fingering_style.get()],
+            )
+        except OSError as error:
+            messagebox.showerror("Could not create output folder", str(error))
+            return
 
         self._stop_debugger()
         self.latest_result = None
