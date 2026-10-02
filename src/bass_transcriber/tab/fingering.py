@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 # Guitar Pro numbers strings from highest to lowest.
 BEADG_STRINGS: tuple[tuple[int, int], ...] = (
@@ -57,6 +57,7 @@ class FingeringProfile:
     hand_stretch_weight: float
     preferred_fret_min: int
     preferred_fret_max: int
+    upper_b_string_penalty: float = 12.0
 
 
 # These are the only profiles offered for new transcriptions. They share the
@@ -156,6 +157,9 @@ def optimize_fingering(
         raise ValueError(
             f"unknown fingering profile {profile_name!r}; choose from {available}"
         ) from error
+
+    if (5, 23) not in strings:
+        profile = replace(profile, upper_b_string_penalty=0.0)
 
     states = _generate_search_states(events, strings)
     base_path, _ = _search(events, states, profile, seconds_per_slot)
@@ -284,6 +288,7 @@ def _placement_cost(
         return cost
 
     cost = candidate.fret * profile.fret_weight
+    cost += upper_b_string_cost(candidate, profile)
     if candidate.fret > profile.preferred_fret_max:
         cost += (candidate.fret - profile.preferred_fret_max) * profile.high_fret_weight
     elif candidate.fret < profile.preferred_fret_min:
@@ -291,6 +296,15 @@ def _placement_cost(
     finger_offset = candidate.fret - state.hand_position
     cost += finger_offset * profile.hand_stretch_weight
     return cost
+
+
+def upper_b_string_cost(
+    candidate: FingeringCandidate, profile: FingeringProfile,
+) -> float:
+    """Prefer the low B string for notes below open E, without banning positions."""
+    if candidate.string == 5 and candidate.fret >= 5:
+        return profile.upper_b_string_penalty
+    return 0.0
 
 
 def _is_scalar_neighbor(events: Sequence[FingeringEvent], index: int) -> bool:

@@ -269,6 +269,12 @@ Open strings do not force the fretting hand back to the nut. Choose **Punish ope
 strings** for the same ergonomic model with a strong preference for fretted
 alternatives.
 
+On a five-string bass, both styles strongly penalize B-string positions from
+fret 5 upward, favoring E/A/D/G for notes in their range. The B string remains
+available for low notes and for passages or chords where using it higher up
+is necessary or avoids a substantially harder movement. Four-string fingering
+is unchanged.
+
 After processing completes, choose **Open fingering comparison** to launch the
 synchronized perspective-highway view for the retained transcription. Compare
 the strategies in the browser, return to the desktop window, select the desired

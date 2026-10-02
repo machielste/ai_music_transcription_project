@@ -195,3 +195,40 @@ def test_a_rare_upper_double_stop_does_not_distort_the_bass_backbone() -> None:
 def test_unknown_profile_is_rejected() -> None:
     with pytest.raises(ValueError, match="unknown fingering profile"):
         optimize_fingering([FingeringEvent(28, 0, 2)], "unknown")
+
+
+@pytest.mark.parametrize("profile", ["balanced", "avoid_open"])
+def test_five_string_reserves_low_b_for_notes_below_open_e(profile: str) -> None:
+    pitches = [26, 27, 28, 30, 31, 26]
+    events = [
+        FingeringEvent(pitch, index * 2, index * 2 + 2)
+        for index, pitch in enumerate(pitches)
+    ]
+
+    result = optimize_fingering(events, profile)
+
+    assert [(choice.string, choice.fret) for choice in result] == [
+        (5, 3), (5, 4), (4, 0), (4, 2), (4, 3), (5, 3),
+    ]
+
+
+@pytest.mark.parametrize("profile", ["balanced", "avoid_open"])
+@pytest.mark.parametrize("pitches", [(33, 34), (28, 33, 38, 43, 48)])
+def test_chords_avoid_upper_b_unless_needed_for_all_notes(
+    profile: str, pitches: tuple[int, ...],
+) -> None:
+    grid = RhythmGrid(
+        detector="test", bpm=120.0, beats_per_bar=4,
+        first_downbeat_seconds=0.0, beat_times_seconds=(0.0, 0.5),
+        onset_delay_seconds=0.0,
+    )
+    notes = [BassNote(pitch, 0.0, 0.25, "electric_bass") for pitch in pitches]
+
+    result = build_fingering_timeline(notes, grid, profile)
+
+    assert len(result.notes) == len(pitches)
+    assert not result.dropped_pitches
+    assert not result.pruned_chords
+    assert len({note.string for note in result.notes}) == len(pitches)
+    upper_b_notes = [note for note in result.notes if note.string == 5 and note.fret >= 5]
+    assert len(upper_b_notes) == (1 if len(pitches) == 5 else 0)

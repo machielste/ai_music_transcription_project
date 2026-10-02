@@ -9,10 +9,14 @@ from itertools import groupby, product
 from bass_transcriber.models import BassNote, RhythmGrid
 from bass_transcriber.tab.fingering import (
     BEADG_STRINGS,
+    FINGERING_PROFILES,
     FingeringCandidate,
     FingeringEvent,
+    FingeringProfile,
     generate_candidates,
+    normalize_profile_name,
     optimize_fingering,
+    upper_b_string_cost,
 )
 
 SUBDIVISIONS_PER_BEAT = 8
@@ -124,7 +128,12 @@ def build_fingering_timeline(
         ResolvedTabNote(event.pitch, event.start_slot, event.end_slot, string, fret)
         for event, (string, fret) in zip(events, fingerings, strict=True)
     ]
-    resolved = _assign_distinct_chord_strings(resolved, strings)
+    chord_profile = (
+        FINGERING_PROFILES[normalize_profile_name(profile_name)]
+        if profile_name is not None and (5, 23) in strings
+        else None
+    )
+    resolved = _assign_distinct_chord_strings(resolved, strings, chord_profile)
 
     # Prevent independently rounded offsets from extending through the next
     # attack while retaining every note in an explicit simultaneous chord.
@@ -269,12 +278,19 @@ def _has_distinct_string_assignment(
 def _assign_distinct_chord_strings(
     notes: list[ResolvedTabNote],
     strings: Sequence[tuple[int, int]],
+    profile: FingeringProfile | None,
 ) -> list[ResolvedTabNote]:
     """Keep optimized fingerings when possible and resolve chord collisions."""
     resolved: list[ResolvedTabNote] = []
     for _, group_iterator in groupby(notes, key=lambda note: note.start_slot):
         chord = list(group_iterator)
-        if len(chord) == 1 or len({note.string for note in chord}) == len(chord):
+        if len(chord) == 1 or (
+            len({note.string for note in chord}) == len(chord)
+            and not (
+                profile is not None
+                and any(note.string == 5 and note.fret >= 5 for note in chord)
+            )
+        ):
             resolved.extend(chord)
             continue
         if len(chord) > len(strings):
@@ -292,7 +308,7 @@ def _assign_distinct_chord_strings(
         try:
             selected = min(
                 combinations,
-                key=lambda combination: _chord_fingering_cost(combination, preferred),
+                key=lambda combination: _chord_fingering_cost(combination, preferred, profile),
             )
         except ValueError as error:
             pitches = ", ".join(str(note.pitch) for note in chord)
@@ -315,13 +331,18 @@ def _assign_distinct_chord_strings(
 def _chord_fingering_cost(
     choices: tuple[FingeringCandidate, ...],
     preferred: list[FingeringCandidate],
-) -> tuple[int, int, int]:
+    profile: FingeringProfile | None,
+) -> tuple[float, int, int]:
     changed = sum(choice != original for choice, original in zip(choices, preferred, strict=True))
     displacement = sum(
         abs(choice.fret - original.fret) + abs(choice.string - original.string)
         for choice, original in zip(choices, preferred, strict=True)
     )
-    return changed, displacement, sum(choice.fret for choice in choices)
+    penalty = (
+        sum(upper_b_string_cost(choice, profile) for choice in choices)
+        if profile is not None else 0.0
+    )
+    return changed + penalty, displacement, sum(choice.fret for choice in choices)
 
 
 def _choose_fingering(
