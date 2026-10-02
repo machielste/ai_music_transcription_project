@@ -10,7 +10,11 @@ import pytest
 import soundfile as sf
 
 from bass_transcriber.export.gp5 import write_gp5
-from bass_transcriber.export.tonelib import _score_from_gp5, write_tonelib_song
+from bass_transcriber.export.tonelib import (
+    _audio_entry_name,
+    _score_from_gp5,
+    write_tonelib_song,
+)
 from bass_transcriber.models import BassNote, RhythmGrid
 
 
@@ -21,6 +25,17 @@ def _template() -> ET.Element:
         '<Backing_track1 mute="1"><audio><name>old.mp3</name></audio></Backing_track1>'
         '</Score>'
     )
+
+
+@pytest.mark.parametrize("filename,entry", [
+    ("Moving Up.mp3", "audio/e9aad03ba3d22453.snd"),
+    ("01. Office Lady.mp3", "audio/268240f63feb7267.snd"),
+    ("03 Steely Dan - Don't Take me Alive.mp3", "audio/3670a2d3a2fc763f.snd"),
+    ("06-Flying 午前10時発 (Flying gozen jūji hatsu).mp3", "audio/e7371c3a69e20876.snd"),
+    ("Donny Benét - Second Dinner (Official Music Video).mp3", "audio/1557d2d7f7b099fb.snd"),
+])
+def test_audio_id_matches_projects_saved_by_tonelib(filename: str, entry: str) -> None:
+    assert _audio_entry_name(filename) == entry
 
 
 def _gp5(path: Path) -> None:
@@ -90,7 +105,8 @@ def test_archive_embeds_audio_and_refuses_overwrite(tmp_path: Path) -> None:
         root = ET.fromstring(archive.read("the_song.dat").rstrip(b"\0"))
         assert root.findtext("Backing_track1/audio/name") == source.name
         audio_entry = root.findtext("Backing_track1/audio/data_file")
-        assert re.fullmatch(r"audio/[0-9a-f]{16}\.snd", audio_entry)
+        assert re.fullmatch(r"audio/[0-9a-f]{1,16}\.snd", audio_entry)
+        assert audio_entry == _audio_entry_name(source.name)
         payload = archive.read(audio_entry)
         assert payload.startswith(b"fLaC")
         assert len(payload) == int(root.findtext("Backing_track1/audio/data_len"))
@@ -136,6 +152,7 @@ def test_desktop_pipeline_creates_and_refreshes_companion_project(
     with zipfile.ZipFile(result.tonelib_song) as archive:
         score = ET.fromstring(archive.read("the_song.dat").rstrip(b"\0"))
         assert score.findtext("Backing_track1/audio/name") == "music.wav"
+        assert score.findtext("Backing_track1/audio/data_file") == _audio_entry_name("music.wav")
         assert score.find("Tracks/Track").get("mute") == "1"
         assert archive.testzip() is None
     # Re-exporting an edited draft replaces its companion, rather than refusing

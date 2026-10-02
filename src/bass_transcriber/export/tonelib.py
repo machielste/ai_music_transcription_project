@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import argparse
 import copy
-import hashlib
 import shutil
 import subprocess
 import tempfile
@@ -22,6 +21,19 @@ import guitarpro  # type: ignore[import-untyped]
 
 def _text(parent: ET.Element, tag: str, value: object) -> None:
     ET.SubElement(parent, tag).text = str(value)
+
+
+def _audio_entry_name(filename: str) -> str:
+    """Match the filename hash used for audio IDs in native ToneLib projects.
+
+    This is JUCE String::hashCode64: multiply by 101 for each Unicode code point,
+    wrapping to 64 bits. ToneLib stores its unsigned hexadecimal representation.
+    The hash must match the audio/name field, including extension and case.
+    """
+    value = 0
+    for character in filename:
+        value = (value * 101 + ord(character)) & ((1 << 64) - 1)
+    return f"audio/{value:x}.snd"
 
 
 def _score_from_gp5(song: Any, template: ET.Element) -> ET.Element:
@@ -140,11 +152,8 @@ def write_tonelib_song(
              "-map", "0:a:0", "-c:a", "flac", str(encoded)],
             check=True, capture_output=True,
         )
-        # Match native projects' hexadecimal 64-bit audio identifiers. The first
-        # prototype used backing.snd, and ToneLib did not load its backing track.
-        with encoded.open("rb") as stream:
-            audio_id = hashlib.file_digest(stream, "sha256").hexdigest()[:16]
-        audio_entry = f"audio/{audio_id}.snd"
+        # ToneLib resolves backing audio by its filename hash, not its content hash.
+        audio_entry = _audio_entry_name(audio.name)
         backing = root.find("Backing_track1/audio")
         assert backing is not None
         markers = backing.find("bars")

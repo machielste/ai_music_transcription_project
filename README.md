@@ -126,8 +126,10 @@ The output embeds FLAC audio and retains the GP5 notes, tuning, durations, and
 bar-level tempo changes. The backing track starts at zero; its beat markers are
 derived from the GP5 tempos rather than re-detecting the audio tempo. The score's
 MIDI bass is muted (`mute="1"` on the score's `Track`) and the backing audio is
-enabled (`mute="0"` on `Backing_track1`). Embedded audio entries use hexadecimal
-identifiers, which ToneLib requires to load the backing audio. FFmpeg must be on PATH.
+enabled (`mute="0"` on `Backing_track1`). Embedded audio identifiers must match
+ToneLib's 64-bit filename hash, including the extension and case; arbitrary IDs
+can leave the backing track missing even though its audio is in the archive.
+FFmpeg must be on PATH.
 
 The inferred format was verified by opening the generated project in ToneLib Jam
 and checking the waveform, audio playback, and synchronization. Supported input is a
