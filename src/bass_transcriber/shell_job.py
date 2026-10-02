@@ -40,13 +40,15 @@ def run_job(
             fingering_profile=profile,
             merge_sustained_retriggers=True,
             generate_gp5=True,
+            generate_tonelib=True,
             progress=lambda fraction, message: report.put(("progress", (fraction, message))),
         )
         report.put(
             (
                 "done",
                 f"Created {result.output.name}\n"
-                f"{result.note_count} notes · {result.bpm:.3f} BPM"
+                + (f"Created {result.tonelib_song.name}\n" if result.tonelib_song else "")
+                + f"{result.note_count} notes · {result.bpm:.3f} BPM"
                 + ("\n\nWarnings:\n" + "\n".join(result.warnings) if result.warnings else ""),
             )
         )

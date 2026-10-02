@@ -69,7 +69,8 @@ def test_shell_job_generates_gp5_with_selected_settings(
     def process(audio: Path, destination: Path, **settings: object) -> SimpleNamespace:
         calls.append((audio, destination, settings))
         return SimpleNamespace(
-            output=destination / "song.bass.gp5", note_count=10, bpm=120.0, warnings=()
+            output=destination / "song.bass.gp5", note_count=10, bpm=120.0, warnings=(),
+            tonelib_song=destination / "song.bass.song",
         )
 
     monkeypatch.setattr("bass_transcriber.pipeline.process_song", process)
@@ -81,6 +82,7 @@ def test_shell_job_generates_gp5_with_selected_settings(
     assert calls[0][2]["fingering_profile"] == "avoid_open"
     assert calls[0][2]["generate_gp5"] is True
     assert calls[0][2]["copy_source"] is True
+    assert calls[0][2]["generate_tonelib"] is True
     assert [events.get_nowait()[0] for _ in range(events.qsize())] == ["folder", "done"]
 
 

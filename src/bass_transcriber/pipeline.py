@@ -17,6 +17,7 @@ from bass_transcriber.export.fingering_json import (
 from bass_transcriber.export.gp5 import GP5ExportResult, write_gp5, write_resolved_gp5
 from bass_transcriber.export.json import read_notes_json, write_notes_json
 from bass_transcriber.export.rhythm_json import write_rhythm_json
+from bass_transcriber.export.tonelib import write_tonelib_song
 from bass_transcriber.models import BassInstrument, BassNote, RhythmGrid
 from bass_transcriber.postprocess import merge_false_retriggers
 from bass_transcriber.rhythm import detect_rhythm
@@ -49,6 +50,7 @@ class ProcessingResult:
     raw_notes: Path | None = None
     fingering_draft: Path | None = None
     reused_raw_notes: bool = False
+    tonelib_song: Path | None = None
 
 
 def output_path_for(source: Path, destination: Path) -> Path:
@@ -82,6 +84,7 @@ def process_song(
     fingering_profile: str | None = "balanced",
     five_string: bool = True,
     generate_gp5: bool = True,
+    generate_tonelib: bool = False,
     progress: ProgressCallback | None = None,
 ) -> ProcessingResult:
     """Run transcription through an editable draft and optionally write GP5."""
@@ -91,6 +94,7 @@ def process_song(
         raise FileNotFoundError(f"raw model output does not exist: {raw_notes_input}")
     destination.mkdir(parents=True, exist_ok=True)
     final_output = output_path_for(source, destination)
+    final_song = final_output.with_suffix(".song") if generate_tonelib else None
     final_debug_log = debug_path_for(source, destination)
     final_raw_notes = raw_notes_path_for(source, destination)
     final_fingering_draft = fingering_path_for(source, destination)
@@ -118,6 +122,7 @@ def process_song(
             "five_string": five_string,
             "tuning": "BEADG" if five_string else "EADG",
             "generate_gp5": generate_gp5,
+            "generate_tonelib": generate_tonelib,
         },
         ffmpeg_path=ffmpeg,
     )
@@ -352,6 +357,11 @@ def process_song(
                 shutil.copy2(source, source_copy)
             copied_source = source_copy
 
+        if generate_gp5 and final_song is not None:
+            _notify(progress, 0.995, "Embedding backing audio in ToneLib Jam project")
+            with debug_run.stage("tonelib_export"):
+                write_tonelib_song(final_output, copied_source or source, final_song)
+
         debug_run.set_section(
             "result",
             {
@@ -362,6 +372,7 @@ def process_song(
                 "raw_notes": str(final_raw_notes.resolve()),
                 "fingering_draft": str(final_fingering_draft.resolve()),
                 "gp5": str(final_output.resolve()) if generate_gp5 else None,
+                "tonelib_song": str(final_song.resolve()) if final_song and generate_gp5 else None,
                 "reused_raw_notes": reused_raw_notes,
             },
         )
@@ -384,6 +395,7 @@ def process_song(
             raw_notes=final_raw_notes,
             fingering_draft=final_fingering_draft,
             reused_raw_notes=reused_raw_notes,
+            tonelib_song=final_song,
         )
     except Exception as error:
         if not reused_raw_notes:
@@ -418,6 +430,7 @@ def rewrite_gp5_fingering(
             five_string=result.five_string,
         )
         temporary_output.replace(result.output)
+    _export_tonelib_for_result(result)
     return export_result
 
 
@@ -473,11 +486,27 @@ def export_gp5_from_fingering_draft(result: ProcessingResult) -> GP5ExportResult
             strings=document.strings,
         )
         temporary_output.replace(result.output)
+    _export_tonelib_for_result(result)
     return GP5ExportResult(
         len(document.notes),
         document.dropped_pitches,
         document.pruned_chords,
     )
+
+
+def _export_tonelib_for_result(result: ProcessingResult) -> None:
+    """Refresh the companion project after exporting or changing a GP5."""
+    if result.tonelib_song is None:
+        return
+    audio = result.copied_source or result.source
+    if audio is None:
+        raise ValueError("ToneLib export requires the original audio")
+    with tempfile.TemporaryDirectory(
+        prefix="bass-transcriber-tonelib-", dir=result.output.parent,
+    ) as temporary:
+        staged = Path(temporary) / result.tonelib_song.name
+        write_tonelib_song(result.output, audio, staged)
+        staged.replace(result.tonelib_song)
 
 
 def _convert_to_wav(ffmpeg: str, source: Path, output: Path) -> None:

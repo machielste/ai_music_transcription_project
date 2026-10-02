@@ -450,6 +450,7 @@ class TranscriberApp:
                 fingering_profile=fingering_profile,
                 five_string=five_string,
                 generate_gp5=False,
+                generate_tonelib=True,
                 progress=report,
             )
         except Exception as error:  # The UI must report backend failures cleanly.
@@ -550,11 +551,13 @@ class TranscriberApp:
                     result, note_count = payload
                     self._set_action_buttons_enabled(True)
                     self.progress.set(100.0)
-                    self.status.set(f"Created GP5: {result.output}")
+                    self.status.set(f"Created GP5 and ToneLib project: {result.output.parent}")
                     messagebox.showinfo(
                         "GP5 export complete",
                         f"Validated {result.fingering_draft.name} and created "
-                        f"{result.output.name}.\nExported {note_count} notes.",
+                        f"{result.output.name}.\nExported {note_count} notes."
+                        + (f"\nCreated {result.tonelib_song.name} with embedded backing audio."
+                           if result.tonelib_song else ""),
                     )
                 elif event == "draft_export_error":
                     self._set_action_buttons_enabled(True)
