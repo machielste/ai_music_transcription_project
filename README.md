@@ -150,17 +150,34 @@ rights required):
 powershell -NoProfile -File .\scripts\windows-context-menu.ps1 install
 ```
 
-Right-click an MP3, WAV, FLAC, OGG, or M4A file and choose **Generate bass
-tablature → 4-string bass (EADG)** or **5-string bass (BEADG)**, then click
-**Balanced** or **Punish open strings**. Generation starts immediately in a
-progress window and creates GP5, a ToneLib `.song` with embedded backing audio,
-editable fingering JSON, raw notes, and diagnostics
-alongside a copy of the original music file
-in a separate folder inside this repository's `outputs` directory, for example
-`outputs/song.4-string.balanced/`. Repeating a run creates `.2`, `.3`, etc. folders
+Right-click an MP3, WAV, FLAC, OGG, or M4A file, or a folder containing music,
+and choose **Generate bass tablature → ToneLib Only** or **Debug**. Then choose
+**4-string bass (EADG)** or **5-string bass (BEADG)** and click **Balanced** or
+**Punish open strings**. Generation starts immediately in a progress window.
+
+**ToneLib Only** keeps just the ToneLib `.song` with embedded backing audio;
+intermediate files are generated in temporary storage and removed afterward.
+**Debug** keeps all the current outputs: GP5, ToneLib `.song`, editable fingering
+JSON, raw notes, the separated bass stem, diagnostics, and a copy of the original
+music file. Each processing run gets one folder inside this repository's `outputs`
+directory, named after the selected file or folder, for example
+`outputs/song.4-string.balanced/` or `outputs/Album.4-string.balanced/`.
+Repeating a run creates `.2`, `.3`, etc. folders
 and preserves previous results. The progress window has an **Open output folder**
 button. Closing it during generation minimizes it so the export can finish.
-Failed runs retain diagnostics and an `error.txt` file in their run folder.
+Folder runs process supported files recursively, in relative-path order, one song
+at a time. Tracks directly inside the selected folder are saved together in the
+run folder. Nested music collections are grouped in matching subfolders, preserving
+the original directory structure within that one top-level run folder. Tracks with
+the same filename stem but different formats retain their extensions in the output
+names (for example, `song.mp3.bass.song` and `song.wav.bass.song`). Existing outputs
+inside the selected tree are skipped. The progress window shows the
+current song and overall progress. A failed song does not stop the remaining songs;
+the final summary lists failures. Failed folder-run tracks keep a separate
+`track.error.txt` in their collection folder; single-file runs use `error.txt`.
+**Debug** also retains any intermediate files and diagnostics.
+
+Run the installation command again after updating to refresh an existing menu.
 
 On Windows 11 this registry-based menu is in the classic menu, usually reached
 through **Show more options**. Direct integration into the newer menu requires a
@@ -229,6 +246,14 @@ exits before MuScriptor loads so the two models do not occupy GPU memory togethe
 The first run downloads approximately 700 MB of weights into the separator's
 standard cache (`~/.cache/bs-roformer-infer`). Both checkpoint and configuration
 are checked against the tested SHA256 hashes. No song audio is uploaded.
+
+Inference uses the pinned model's original overlapping chunks and fades, with
+only the current chunk on the GPU. The decoded recording and bass-only
+accumulation buffers stay in CPU RAM; full-length buffers for the other five
+stems are omitted. GPU memory therefore stays bounded by the model and chunk
+size instead of growing with recording length. CPU RAM and processing time still
+grow with duration. The worker log reports completed chunks and an elapsed-time
+estimate; provenance records the adapter and peak allocated CUDA memory.
 
 Normal runs retain only `<song>.bass.stem.wav` (44.1 kHz stereo, floating point,
 without normalization), a `.separation.json` provenance sidecar and a

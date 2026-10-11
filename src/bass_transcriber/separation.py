@@ -113,8 +113,10 @@ def _worker(audio: Path, output: Path, metadata: Path, device: str) -> None:
     import yaml  # type: ignore[import-untyped]
     from bs_roformer import ensure_model_assets  # type: ignore[import-untyped]
     from bs_roformer.inference import SafeLoaderWithTuple  # type: ignore[import-untyped]
-    from bs_roformer.utils import demix_track, get_model_from_config  # type: ignore[import-untyped]
+    from bs_roformer.utils import get_model_from_config  # type: ignore[import-untyped]
     from ml_collections import ConfigDict  # type: ignore[import-untyped]
+
+    from bass_transcriber.separation_inference import demix_bass
 
     started = time.perf_counter()
     if version("bs-roformer-infer") != PACKAGE_VERSION:
@@ -137,10 +139,21 @@ def _worker(audio: Path, output: Path, metadata: Path, device: str) -> None:
     model = get_model_from_config("bs_roformer", config)
     model.load_state_dict(torch.load(weights, map_location="cpu", weights_only=True))
     model.eval().to(device)
-    stems, _ = demix_track(
-        config, model, torch.from_numpy(mix.T.copy()), torch.device(device),
-    )
-    bass = stems["bass"].T
+    inference_started = time.perf_counter()
+
+    def progress(completed: int, total: int) -> None:
+        elapsed = time.perf_counter() - inference_started
+        remaining = elapsed / completed * (total - completed)
+        print(
+            f"Separation chunk {completed}/{total} · {elapsed:.1f}s elapsed "
+            f"· estimated {remaining:.1f}s remaining", flush=True,
+        )
+
+    if device == "cuda":
+        torch.cuda.reset_peak_memory_stats()
+    bass = demix_bass(
+        config, model, torch.from_numpy(mix.T), torch.device(device), progress=progress,
+    ).numpy().T
     if bass.shape != mix.shape or not np.isfinite(bass).all():
         raise RuntimeError("Separator returned invalid bass audio")
     sf.write(str(output), bass, sr, subtype="FLOAT")
@@ -150,6 +163,10 @@ def _worker(audio: Path, output: Path, metadata: Path, device: str) -> None:
         "weights": str(weights), "config": str(config_path), "device": device,
         "sample_rate": sr, "frames": len(bass), "num_overlap": config.inference.num_overlap,
         "seconds": time.perf_counter() - started,
+        "inference_backend": "cpu_overlap_add_bass_v1",
+        "cuda_peak_allocated_bytes": (
+            torch.cuda.max_memory_allocated() if device == "cuda" else None
+        ),
     }, indent=2), encoding="utf-8")
 
 

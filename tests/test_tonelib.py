@@ -3,6 +3,7 @@ import shutil
 import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
+from queue import Queue
 
 import guitarpro
 import numpy as np
@@ -16,6 +17,7 @@ from bass_transcriber.export.tonelib import (
     write_tonelib_song,
 )
 from bass_transcriber.models import BassNote, RhythmGrid
+from bass_transcriber.shell_job import run_job
 
 
 def _template() -> ET.Element:
@@ -160,3 +162,72 @@ def test_desktop_pipeline_creates_and_refreshes_companion_project(
     result.tonelib_song.write_bytes(b"stale project")
     pipeline.export_gp5_from_fingering_draft(result)
     assert zipfile.is_zipfile(result.tonelib_song)
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="FFmpeg required")
+@pytest.mark.parametrize("mode", ["tonelib_only", "debug"])
+def test_recursive_folder_exports_preserve_collections_and_self_contained_projects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str,
+) -> None:
+    import io
+
+    import bass_transcriber.pipeline as pipeline
+
+    source = tmp_path / "Music folder"
+    source.mkdir()
+    samples = np.zeros((4410, 2))
+    (source / "Artist" / "Live album").mkdir(parents=True)
+    for name in ("First song.wav", "First song.flac", "Second song.wav",
+                 "Artist/Live album/First song.wav"):
+        sf.write(source / name, samples, 44100)
+    grid = RhythmGrid(
+        detector="test", bpm=120.0, beats_per_bar=4, first_downbeat_seconds=0.0,
+        beat_times_seconds=(0.0, 0.5), onset_delay_seconds=0.0,
+    )
+
+    def separate(wav: Path, stem: Path, **kwargs: object) -> dict[str, object]:
+        shutil.copy2(wav, stem)
+        return {}
+
+    # Exercise the real conversion, cleanup, draft, GP5, and ToneLib export;
+    # replace only model inference and beat detection.
+    monkeypatch.setattr(pipeline, "separate_bass_audio", separate)
+    monkeypatch.setattr(pipeline, "transcribe_bass", lambda *a, **k: [
+        BassNote(28, 0.0, 0.05, "electric_bass"),
+    ])
+    monkeypatch.setattr(pipeline, "detect_rhythm", lambda *a, **k: grid)
+    output = tmp_path / "outputs"
+    events: Queue[tuple[str, object]] = Queue()
+    run_job(source, output, 4, "balanced", events, mode=mode)
+    messages = [events.get_nowait() for _ in range(events.qsize())]
+    assert messages[-1][0] == "done", messages[-1]
+    assert "Completed 4/4 music files" in messages[-1][1]
+    run_folder = output / "Music folder.4-string.balanced"
+    assert list(output.iterdir()) == [run_folder]
+    projects = list(output.rglob("*.song"))
+    assert {project.relative_to(run_folder).as_posix() for project in projects} == {
+        "First song.wav.bass.song", "First song.flac.bass.song", "Second song.bass.song",
+        "Artist/Live album/First song.bass.song",
+    }
+    if mode == "tonelib_only":
+        assert set(path for path in output.rglob("*") if path.is_file()) == set(projects)
+    else:
+        import json
+
+        for project in projects:
+            prefix = project.with_suffix("")
+            assert prefix.with_suffix(prefix.suffix + ".gp5").is_file()
+            debug = json.loads(Path(f"{prefix}.debug.json").read_text())
+            assert Path(debug["result"]["bass_stem"]).is_file()
+            assert Path(debug["result"]["raw_notes"]).is_file()
+            assert Path(debug["result"]["fingering_draft"]).is_file()
+    for project in projects:
+        with zipfile.ZipFile(project) as archive:
+            assert archive.testzip() is None
+            score = ET.fromstring(archive.read("the_song.dat").rstrip(b"\0"))
+            audio_name = score.findtext("Backing_track1/audio/name")
+            assert (source / project.parent.relative_to(run_folder) / audio_name).is_file()
+            audio_entry = score.findtext("Backing_track1/audio/data_file")
+            decoded, rate = sf.read(io.BytesIO(archive.read(audio_entry)))
+            assert rate == 44100
+            assert np.array_equal(decoded, samples)

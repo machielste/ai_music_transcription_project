@@ -89,19 +89,30 @@ def process_song(
     five_string: bool = True,
     generate_gp5: bool = True,
     generate_tonelib: bool = False,
+    output_stem: str | None = None,
     progress: ProgressCallback | None = None,
 ) -> ProcessingResult:
-    """Run transcription through an editable draft and optionally write GP5."""
+    """Run transcription through an editable draft and optionally write GP5.
+
+    ``output_stem`` names generated artifacts without changing the source identity.
+    """
     if not source.is_file():
         raise FileNotFoundError(f"music file does not exist: {source}")
     if raw_notes_input is not None and not raw_notes_input.is_file():
         raise FileNotFoundError(f"raw model output does not exist: {raw_notes_input}")
+    if output_stem is not None and (
+        not output_stem
+        or output_stem in (".", "..")
+        or any(character in output_stem for character in "/\\:")
+    ):
+        raise ValueError("output_stem must be a filename stem, without path separators")
+    naming_source = source.with_stem(output_stem) if output_stem is not None else source
     destination.mkdir(parents=True, exist_ok=True)
-    final_output = output_path_for(source, destination)
+    final_output = output_path_for(naming_source, destination)
     final_song = final_output.with_suffix(".song") if generate_tonelib else None
-    final_debug_log = debug_path_for(source, destination)
-    final_raw_notes = raw_notes_path_for(source, destination)
-    final_fingering_draft = fingering_path_for(source, destination)
+    final_debug_log = debug_path_for(naming_source, destination)
+    final_raw_notes = raw_notes_path_for(naming_source, destination)
+    final_fingering_draft = fingering_path_for(naming_source, destination)
     debug_target = final_output if generate_gp5 else final_fingering_draft
     ffmpeg = shutil.which("ffmpeg")
     conditioned = force_electric_bass or separate_bass
@@ -129,6 +140,7 @@ def process_song(
             "tuning": "BEADG" if five_string else "EADG",
             "generate_gp5": generate_gp5,
             "generate_tonelib": generate_tonelib,
+            "output_stem": output_stem,
         },
         ffmpeg_path=ffmpeg,
     )
@@ -165,7 +177,7 @@ def process_song(
                     and separation_metadata.get("source_sha256") == file_sha256(source)
                     and separation_metadata.get("stem_sha256") == file_sha256(candidate)
                 ):
-                    bass_stem = destination / f"{source.stem}.bass.stem.wav"
+                    bass_stem = destination / f"{naming_source.stem}.bass.stem.wav"
                     if candidate.resolve() != bass_stem.resolve():
                         shutil.copy2(candidate, bass_stem)
                     transcription_audio = bass_stem
@@ -197,7 +209,7 @@ def process_song(
                 transcription_wav = wav
                 if separate_bass:
                     _notify(progress, 0.03, "Separating bass with BS-RoFormer SW")
-                    bass_stem = destination / f"{source.stem}.bass.stem.wav"
+                    bass_stem = destination / f"{naming_source.stem}.bass.stem.wav"
                     with debug_run.stage("bass_separation"):
                         separation_metadata = separate_bass_audio(
                             wav, bass_stem, original_source=source,
