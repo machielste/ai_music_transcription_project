@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import math
 import shutil
 import subprocess
 import tempfile
@@ -75,6 +76,7 @@ def _score_from_gp5(song: Any, template: ET.Element) -> ET.Element:
         backing.remove(child)
     backing.set("mute", "0")
     backing.set("solo", "0")
+    backing.set("vol_db", format(20 * math.log10(0.33), ".16g"))
     audio = ET.SubElement(backing, "audio")
     markers = ET.SubElement(audio, "bars", num="0", nst="0")
 
