@@ -1,4 +1,8 @@
-"""Per-user Windows Explorer integration; no file associations are replaced."""
+"""Per-user Windows Explorer integration; no file associations are replaced.
+
+Install through scripts/windows-context-menu.ps1 from desktop automation hosts.
+That wrapper avoids the isolated registry view inherited by direct Python runs.
+"""
 
 from __future__ import annotations
 
@@ -42,15 +46,15 @@ def menu_entries(pythonw: Path, output_root: Path) -> dict[str, dict[str, str]]:
             "ExtendedSubCommandsKey": mode_key,
         }
         for strings, tuning in ((4, "EADG"), (5, "BEADG")):
-            group = rf"Software\Classes\{mode_key}\shell\{strings}strings"
-            profile_key = f"{mode_key}.{strings}"
-            entries[group] = {
-                "MUIVerb": f"{strings}-string bass ({tuning})",
-                "ExtendedSubCommandsKey": profile_key,
-            }
+            # Explorer truncates this cascade after 16 entries, counting submenu
+            # headings too. Mode -> string count -> profile needs 18 entries;
+            # mode -> labelled profile needs 14 and keeps every choice visible.
             for profile, label in PROFILES.items():
-                verb = rf"Software\Classes\{profile_key}\shell\{profile}"
-                entries[verb] = {"MUIVerb": label, "MultiSelectModel": "Single"}
+                verb = rf"Software\Classes\{mode_key}\shell\{strings}strings.{profile}"
+                entries[verb] = {
+                    "MUIVerb": f"{strings}-string ({tuning}) - {label}",
+                    "MultiSelectModel": "Single",
+                }
                 command = subprocess.list2cmdline(
                     [
                         str(pythonw),

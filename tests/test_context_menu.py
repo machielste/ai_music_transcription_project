@@ -62,12 +62,30 @@ def test_cascades_reference_complete_per_user_command_groups() -> None:
             assert mode_group["MUIVerb"] == label
             settings = mode_group["ExtendedSubCommandsKey"]
             for strings in (4, 5):
-                string_group = entries[rf"Software\Classes\{settings}\shell\{strings}strings"]
-                profiles = string_group["ExtendedSubCommandsKey"]
                 for profile in PROFILES:
-                    command = entries[rf"Software\Classes\{profiles}\shell\{profile}\command"][""]
+                    verb = rf"Software\Classes\{settings}\shell\{strings}strings.{profile}"
+                    assert entries[verb]["MUIVerb"].startswith(f"{strings}-string (")
+                    assert entries[verb]["MUIVerb"].endswith(PROFILES[profile])
+                    command = entries[verb + r"\command"][""]
                     assert f"--strings {strings} --fingering-profile {profile}" in command
                     assert f"--mode {mode}" in command
+
+
+def test_cascade_fits_explorers_entry_budget() -> None:
+    entries = menu_entries(Path("pythonw.exe"), Path("outputs"))
+
+    def count_group(group: str) -> int:
+        prefix = rf"Software\Classes\{group}\shell" + "\\"
+        total = 0
+        for key, values in entries.items():
+            if not key.startswith(prefix) or "\\" in key.removeprefix(prefix):
+                continue
+            total += 1
+            if "ExtendedSubCommandsKey" in values:
+                total += count_group(values["ExtendedSubCommandsKey"])
+        return total
+
+    assert count_group("BassTranscriber.Commands") <= 16
 
 
 def test_desktop_and_explorer_offer_all_supported_fingering_strategies() -> None:

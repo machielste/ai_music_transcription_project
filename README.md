@@ -113,6 +113,10 @@ creates it when converting a fingering draft to GP5 and refreshes it when
 re-exporting the draft. Open the `.song` directly in ToneLib: its backing audio is
 already embedded, with MIDI bass muted and backing audio enabled.
 
+If double-clicking another project leaves ToneLib showing the previous song,
+switch using **File → Open → Browse** inside ToneLib. This worked in the installed
+app when opening through Windows did not; see `KNOWN_ISSUES.md` for the findings.
+
 A small bundled template supplies the ToneLib 3.1-format project settings and
 contains no song notes or audio. An optional `--template` can use another saved
 project's plugin/display settings without changing that project. For a standalone
@@ -150,10 +154,18 @@ rights required):
 powershell -NoProfile -File .\scripts\windows-context-menu.ps1 install
 ```
 
+Use this PowerShell wrapper when installing from Codex or another desktop
+automation host. It runs registration in the signed-in user's session; calling
+the Python installer directly can update an isolated registry view that Explorer
+does not use, even when the command succeeds and registry checks pass.
+
 Right-click an MP3, WAV, FLAC, OGG, or M4A file, or a folder containing music,
 and choose **Generate bass tablature → ToneLib Only** or **Debug**. Then choose
-**4-string bass (EADG)** or **5-string bass (BEADG)** and click **Balanced**,
-**Punish open strings**, or **Combined**. Generation starts immediately in a progress window.
+the entry for your string count and fingering style, for example
+**5-string (BEADG) - Combined**. Each output mode offers **Balanced**,
+**Punish open strings**, and **Combined** for both tunings. Generation starts
+immediately in a progress window. The string count is included in each entry to
+keep the cascade within Explorer's menu-entry limit.
 
 **ToneLib Only** keeps just the ToneLib `.song` with embedded backing audio;
 intermediate files are generated in temporary storage and removed afterward.
