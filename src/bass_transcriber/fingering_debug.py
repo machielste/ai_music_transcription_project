@@ -27,12 +27,14 @@ from bass_transcriber.tab import (
 DEFAULT_DEBUG_PROFILES: tuple[str, ...] = (
     "balanced",
     "avoid_open",
+    "combined",
     "legacy",
 )
 
 _PROFILE_LABELS = {
     "balanced": "Balanced",
     "avoid_open": "Avoid open strings",
+    "combined": "Combined",
     "legacy": "Legacy lowest fret",
 }
 

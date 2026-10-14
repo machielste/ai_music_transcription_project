@@ -41,7 +41,8 @@ def test_doctor_fails_on_required_error(monkeypatch: object) -> None:
     assert main(["doctor"]) == 1
 
 
-def test_gp5_fingering_profile_can_be_selected() -> None:
+@pytest.mark.parametrize("profile", ["balanced", "avoid_open", "combined"])
+def test_gp5_fingering_profile_can_be_selected(profile: str) -> None:
     args = build_parser().parse_args(
         [
             "export",
@@ -50,13 +51,13 @@ def test_gp5_fingering_profile_can_be_selected() -> None:
             "--rhythm",
             "rhythm.json",
             "--fingering-profile",
-            "avoid_open",
+            profile,
             "--strings",
             "4",
         ]
     )
 
-    assert args.fingering_profile == "avoid_open"
+    assert args.fingering_profile == profile
     assert args.strings == 4
 
 

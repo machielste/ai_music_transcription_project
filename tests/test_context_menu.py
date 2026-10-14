@@ -5,9 +5,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from bass_transcriber.context_menu import AUDIO_EXTENSIONS, OUTPUT_MODES, menu_entries
+from bass_transcriber.context_menu import AUDIO_EXTENSIONS, OUTPUT_MODES, PROFILES, menu_entries
+from bass_transcriber.gui import _FINGERING_OPTIONS
 from bass_transcriber.output_folders import create_run_folder
 from bass_transcriber.shell_job import run_job
+from bass_transcriber.tab import FINGERING_PROFILES
 
 
 def test_folder_reservations_preserve_previous_and_concurrent_results(tmp_path: Path) -> None:
@@ -27,7 +29,7 @@ def test_folder_reservations_preserve_previous_and_concurrent_results(tmp_path: 
 def test_menu_commands_preserve_paths_and_all_settings() -> None:
     entries = menu_entries(Path("C:/Python env/pythonw.exe"), Path("C:/My repo/outputs"))
     commands = [values[""] for key, values in entries.items() if key.endswith(r"\command")]
-    assert len(commands) == 8
+    assert len(commands) == 12
     for command in commands:
         assert command.startswith(
             f'"{Path("C:/Python env/pythonw.exe")}" -m bass_transcriber.shell_job'
@@ -35,7 +37,7 @@ def test_menu_commands_preserve_paths_and_all_settings() -> None:
         assert f'--output-root "{Path("C:/My repo/outputs")}"' in command
         assert command.endswith(' "%1"')
     for strings in (4, 5):
-        for profile in ("balanced", "avoid_open"):
+        for profile in PROFILES:
             for mode in OUTPUT_MODES:
                 assert (
                     sum(
@@ -62,15 +64,22 @@ def test_cascades_reference_complete_per_user_command_groups() -> None:
             for strings in (4, 5):
                 string_group = entries[rf"Software\Classes\{settings}\shell\{strings}strings"]
                 profiles = string_group["ExtendedSubCommandsKey"]
-                for profile in ("balanced", "avoid_open"):
+                for profile in PROFILES:
                     command = entries[rf"Software\Classes\{profiles}\shell\{profile}\command"][""]
                     assert f"--strings {strings} --fingering-profile {profile}" in command
                     assert f"--mode {mode}" in command
 
 
+def test_desktop_and_explorer_offer_all_supported_fingering_strategies() -> None:
+    assert set(_FINGERING_OPTIONS.values()) == set(PROFILES) == set(FINGERING_PROFILES)
+    assert _FINGERING_OPTIONS["Combined"] == "combined"
+
+
+@pytest.mark.parametrize("profile", ["avoid_open", "combined"])
 def test_shell_job_generates_gp5_with_selected_settings(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    profile: str,
 ) -> None:
     source = tmp_path / "song.mp3"
     source.touch()
@@ -88,11 +97,11 @@ def test_shell_job_generates_gp5_with_selected_settings(
 
     monkeypatch.setattr("bass_transcriber.pipeline.process_song", process)
     events: Queue[tuple[str, object]] = Queue()
-    run_job(source, tmp_path / "outputs", 4, "avoid_open", events)
+    run_job(source, tmp_path / "outputs", 4, profile, events)
     assert calls[0][0] == source
     assert calls[0][1].parent == tmp_path / "outputs"
     assert calls[0][2]["five_string"] is False
-    assert calls[0][2]["fingering_profile"] == "avoid_open"
+    assert calls[0][2]["fingering_profile"] == profile
     assert calls[0][2]["generate_gp5"] is True
     assert calls[0][2]["copy_source"] is True
     assert calls[0][2]["generate_tonelib"] is True

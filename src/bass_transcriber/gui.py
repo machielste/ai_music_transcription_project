@@ -39,6 +39,7 @@ _RAW_NOTE_TYPES = [
 _FINGERING_OPTIONS = {
     "Balanced (recommended)": "balanced",
     "Punish open strings": "avoid_open",
+    "Combined": "combined",
 }
 
 

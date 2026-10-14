@@ -58,12 +58,18 @@ class FingeringProfile:
     preferred_fret_min: int
     preferred_fret_max: int
     upper_b_string_penalty: float = 12.0
+    # Soft preference for the tracked index-finger position. Zero keeps the
+    # original balanced and avoid_open policies unchanged.
+    hand_position_weight: float = 0.0
+    preferred_hand_position_min: int = 5
+    preferred_hand_position_max: int = 9
+    same_string_jump_weight: float = 0.0
+    root_fifth_octave_reward: float = 0.0
 
 
-# These are the only profiles offered for new transcriptions. They share the
-# same ergonomic model; avoid_open changes only the strength of the open-string
-# preference. Old names are accepted below so existing saved results can still
-# be re-exported.
+# Balanced and avoid_open share the original model. Combined adds the tested
+# middle-neck preference, fretted-jump cost, and complete three-note shapes.
+# Old names are accepted below so existing results can still be re-exported.
 FINGERING_PROFILES: dict[str, FingeringProfile] = {
     "balanced": FingeringProfile(
         fret_weight=0.04,
@@ -103,6 +109,14 @@ FINGERING_PROFILES: dict[str, FingeringProfile] = {
     ),
 }
 
+# Preserve the exact settings of the accepted 03-compact-shapes experiment.
+FINGERING_PROFILES["combined"] = replace(
+    FINGERING_PROFILES["avoid_open"],
+    hand_position_weight=0.40,
+    same_string_jump_weight=0.50,
+    root_fifth_octave_reward=4.0,
+)
+
 _LEGACY_PROFILE_ALIASES: dict[str, str] = {
     "slap_funk": "balanced",
     "low_positions": "balanced",
@@ -137,12 +151,15 @@ def optimize_fingering(
     strings: Sequence[tuple[int, int]] = BEADG_STRINGS,
     seconds_per_slot: float = 0.0625,
     enforce_repeated_phrases: bool = True,
+    profile_override: FingeringProfile | None = None,
 ) -> list[FingeringCandidate]:
     """Choose a playable path while tracking the fretting hand independently.
 
     Open strings deliberately retain a hand-position state: playing fret zero
     does not require moving the fretting hand to the nut. Exact repeated
     pitch/rhythm phrases are locked to one candidate pattern in a second pass.
+    A profile override allows controlled experiments without registering a new
+    production policy or changing the shared profile dictionary.
     """
     if not events:
         return []
@@ -158,6 +175,8 @@ def optimize_fingering(
             f"unknown fingering profile {profile_name!r}; choose from {available}"
         ) from error
 
+    if profile_override is not None:
+        profile = profile_override
     if (5, 23) not in strings:
         profile = replace(profile, upper_b_string_penalty=0.0)
 
@@ -231,6 +250,8 @@ def _search(
 ) -> tuple[list[_SearchState], float]:
     if any(not event_states for event_states in states):
         raise ValueError("fingering constraints removed every candidate for an event")
+    if profile.root_fifth_octave_reward and len(events) >= 3:
+        return _search_with_shapes(events, states, profile, seconds_per_slot)
 
     costs: list[list[float]] = [
         [_placement_cost(events, 0, state, profile) for state in states[0]]
@@ -274,6 +295,85 @@ def _search(
     return path, total_cost
 
 
+def _root_fifth_octave_cost(
+    events: Sequence[FingeringEvent], index: int,
+    first: _SearchState, middle: _SearchState, last: _SearchState,
+    profile: FingeringProfile,
+) -> float:
+    intervals = (events[index - 1].pitch - events[index - 2].pitch,
+                 events[index].pitch - events[index - 1].pitch)
+    if intervals == (7, 5):
+        root, fifth, octave = first.candidate, middle.candidate, last.candidate
+    elif intervals == (-5, -7):
+        root, fifth, octave = last.candidate, middle.candidate, first.candidate
+    else:
+        return 0.0
+    # Separate phrases across long rests; a shape is a local playing gesture.
+    if any((events[i].start_slot - events[i - 1].end_slot) > 8
+           for i in (index - 1, index)):
+        return 0.0
+    compact = (
+        root.fret > 0 and fifth.string == root.string - 1
+        and octave.string == root.string - 2
+        and fifth.fret == octave.fret == root.fret + 2
+    )
+    return -profile.root_fifth_octave_reward if compact else 0.0
+
+
+def _search_with_shapes(
+    events: Sequence[FingeringEvent], states: Sequence[Sequence[_SearchState]],
+    profile: FingeringProfile, seconds_per_slot: float,
+) -> tuple[list[_SearchState], float]:
+    """Exact second-order search: retain two states to score complete triples."""
+    placement = [[_placement_cost(events, i, s, profile) for s in options]
+                 for i, options in enumerate(states)]
+    transitions = [
+        [[_transition_cost(events[i - 1], a, events[i], b, profile, seconds_per_slot)
+          for b in states[i]] for a in states[i - 1]]
+        for i in range(1, len(events))
+    ]
+    costs = [[placement[0][a] + transitions[0][a][b] + placement[1][b]
+              for b in range(len(states[1]))] for a in range(len(states[0]))]
+    backpointers: list[list[list[int]]] = []
+    for i in range(2, len(events)):
+        # Only 7/5 and -5/-7 triples need the older candidate. On other notes
+        # collapse history first to retain the speed of first-order search.
+        intervals = (events[i - 1].pitch - events[i - 2].pitch,
+                     events[i].pitch - events[i - 1].pitch)
+        shaped = intervals in ((7, 5), (-5, -7))
+        cheapest = [min(range(len(states[i - 2])), key=lambda a: costs[a][b])
+                    for b in range(len(states[i - 1]))]
+        next_costs: list[list[float]] = []
+        pointers: list[list[int]] = []
+        for b, middle in enumerate(states[i - 1]):
+            row: list[float] = []
+            pointer_row: list[int] = []
+            for c, last in enumerate(states[i]):
+                if shaped:
+                    options = [costs[a][b] + _root_fifth_octave_cost(
+                        events, i, first, middle, last, profile,
+                    ) for a, first in enumerate(states[i - 2])]
+                    a = min(range(len(options)), key=options.__getitem__)
+                    previous_cost = options[a]
+                else:
+                    a = cheapest[b]
+                    previous_cost = costs[a][b]
+                row.append(previous_cost + transitions[i - 1][b][c] + placement[i][c])
+                pointer_row.append(a)
+            next_costs.append(row)
+            pointers.append(pointer_row)
+        costs = next_costs
+        backpointers.append(pointers)
+    a, b = min(((a, b) for a, row in enumerate(costs) for b in range(len(row))),
+               key=lambda pair: costs[pair[0]][pair[1]])
+    total = costs[a][b]
+    selected = [a, b]
+    for pointers in reversed(backpointers):
+        a, b = pointers[a][b], a
+        selected.insert(0, a)
+    return [options[index] for options, index in zip(states, selected, strict=True)], total
+
+
 def _placement_cost(
     events: Sequence[FingeringEvent],
     index: int,
@@ -281,13 +381,19 @@ def _placement_cost(
     profile: FingeringProfile,
 ) -> float:
     candidate = state.candidate
+    position_distance = max(
+        0,
+        profile.preferred_hand_position_min - state.hand_position,
+        state.hand_position - profile.preferred_hand_position_max,
+    )
+    position_cost = position_distance * profile.hand_position_weight
     if candidate.fret == 0:
-        cost = profile.open_string_penalty
+        cost = profile.open_string_penalty + position_cost
         if _is_scalar_neighbor(events, index):
             cost += profile.open_in_run_penalty
         return cost
 
-    cost = candidate.fret * profile.fret_weight
+    cost = candidate.fret * profile.fret_weight + position_cost
     cost += upper_b_string_cost(candidate, profile)
     if candidate.fret > profile.preferred_fret_max:
         cost += (candidate.fret - profile.preferred_fret_max) * profile.high_fret_weight
@@ -345,6 +451,15 @@ def _transition_cost(
         * timing_multiplier
         / rest_discount
     )
+
+    if (profile.same_string_jump_weight and string_distance == 0
+            and previous.candidate.fret > 0 and current.candidate.fret > 0):
+        excess = max(0, abs(current.candidate.fret - previous.candidate.fret) - 3)
+        # A sustained note does not leave its entire duration free for moving.
+        # Allow a short articulation window plus any actual intervening rest.
+        reposition_seconds = max(seconds_per_slot, min(onset_seconds, 0.12 + rest_seconds))
+        urgency = 1.0 + max(0.0, (0.30 - reposition_seconds) / 0.30)
+        cost += excess ** 2 * profile.same_string_jump_weight * urgency / rest_discount
 
     if position_shift:
         frets_per_second = position_shift / onset_seconds

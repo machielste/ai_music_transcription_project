@@ -24,28 +24,29 @@ def _grid() -> RhythmGrid:
     )
 
 
-def _write_draft(path: Path, source: Path) -> None:
+def _write_draft(path: Path, source: Path, profile: str = "balanced") -> None:
     write_fingering_json(
         path,
         FingeringTimeline((ResolvedTabNote(38, 0, 4, 2, 0),), ()),
         source=source,
         title="Editable bass",
-        profile="balanced",
+        profile=profile,
         strings=EADG_STRINGS,
         rhythm=_grid(),
     )
 
 
-def test_fingering_json_round_trips_resolved_notes(tmp_path: Path) -> None:
+@pytest.mark.parametrize("profile", ["balanced", "combined"])
+def test_fingering_json_round_trips_resolved_notes(tmp_path: Path, profile: str) -> None:
     source = tmp_path / "song.wav"
     output = tmp_path / "song.bass.fingering.json"
 
-    _write_draft(output, source)
+    _write_draft(output, source, profile)
     document = read_fingering_json(output)
 
     assert document.source == source.resolve()
     assert document.title == "Editable bass"
-    assert document.profile == "balanced"
+    assert document.profile == profile
     assert document.strings == EADG_STRINGS
     assert document.rhythm == _grid()
     assert document.notes == (ResolvedTabNote(38, 0, 4, 2, 0),)

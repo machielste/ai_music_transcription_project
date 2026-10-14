@@ -11,7 +11,11 @@ from pathlib import Path
 AUDIO_EXTENSIONS = (".mp3", ".wav", ".flac", ".ogg", ".m4a")
 MENU_KEY = "BassTranscriber"
 COMMANDS_KEY = "BassTranscriber.Commands"
-PROFILES = {"balanced": "Balanced", "avoid_open": "Punish open strings"}
+PROFILES = {
+    "balanced": "Balanced",
+    "avoid_open": "Punish open strings",
+    "combined": "Combined",
+}
 OUTPUT_MODES = {"tonelib_only": "ToneLib Only", "debug": "Debug"}
 
 

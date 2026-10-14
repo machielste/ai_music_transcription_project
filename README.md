@@ -152,8 +152,8 @@ powershell -NoProfile -File .\scripts\windows-context-menu.ps1 install
 
 Right-click an MP3, WAV, FLAC, OGG, or M4A file, or a folder containing music,
 and choose **Generate bass tablature → ToneLib Only** or **Debug**. Then choose
-**4-string bass (EADG)** or **5-string bass (BEADG)** and click **Balanced** or
-**Punish open strings**. Generation starts immediately in a progress window.
+**4-string bass (EADG)** or **5-string bass (BEADG)** and click **Balanced**,
+**Punish open strings**, or **Combined**. Generation starts immediately in a progress window.
 
 **ToneLib Only** keeps just the ToneLib `.song` with embedded backing audio;
 intermediate files are generated in temporary storage and removed afterward.
@@ -294,7 +294,24 @@ Open strings do not force the fretting hand back to the nut. Choose **Punish ope
 strings** for the same ergonomic model with a strong preference for fretted
 alternatives.
 
-On a five-string bass, both styles strongly penalize B-string positions from
+**Combined** uses the tested combined strategy: the strong open-string preference,
+a soft preference for hand positions 5–9, a timing-sensitive cost for large jumps
+along one fretted string, and a reward for compact root–fifth–octave shapes.
+It can retain a complete low-position shape when entering a higher position is
+harder. Shape recognition currently covers consecutive ascending or descending
+triples, with no more than one beat of rest between notes; repeated notes and
+fills inside a shape are not yet recognized. It is available in the desktop
+selector, Explorer menus, and the fingering comparison. Balanced remains the
+default while Combined is evaluated on more songs.
+
+For CLI exports, select `--fingering-profile combined`. For example:
+
+```powershell
+uv run bass-transcriber export gp5 outputs\song.notes.json `
+  --rhythm outputs\song.rhythm.json --strings 4 --fingering-profile combined
+```
+
+On a five-string bass, all three styles strongly penalize B-string positions from
 fret 5 upward, favoring E/A/D/G for notes in their range. The B string remains
 available for low notes and for passages or chords where using it higher up
 is necessary or avoids a substantially harder movement. Four-string fingering
@@ -319,7 +336,30 @@ and reports the exact decision in both the completion warning and debug JSON.
 
 ## Fingering strategy debugger
 
-Compare the two fingering policies and the legacy lowest-fret baseline in
+For a controlled hand-position experiment from an existing generated ToneLib
+project, without rerunning transcription or re-encoding the embedded audio:
+
+```powershell
+uv run python -m bass_transcriber.fingering_experiment "outputs\example.bass.song" `
+  "outputs\example-fingering-experiments"
+```
+
+The destination must be a new directory. It contains the original placements
+and four full-song `.song` examples based on **Punish open strings**: gentle,
+medium, and strong attraction toward index-finger positions 5–9, plus medium
+attraction with half the base hand-shift weight. A README and comparison JSON
+record settings and placements in bars 11–15. The tool supports the application's
+simple single-track 4/4 exports and verifies pitches, timing, ties, settings, and
+backing audio. These experiments do not change the production styles or defaults.
+
+Add `--suite shapes` for the second comparison: the previous medium setting,
+a same-string jump cost, a compact root–fifth–octave reward, both together, and
+both with gentler attraction toward the middle of the neck. The README includes
+whole-song metrics and placements in bars 11, 13, 23, and 50. Shape recognition
+currently covers consecutive ascending or descending triples; fills and repeated
+notes inside a shape are not yet recognized.
+
+Compare the three fingering policies and the legacy lowest-fret baseline in
 synchronized perspective note highways:
 
 ```powershell

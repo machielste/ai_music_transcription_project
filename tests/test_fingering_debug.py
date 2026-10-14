@@ -33,7 +33,6 @@ def test_comparison_uses_final_fingering_timelines_for_every_profile() -> None:
     document = build_comparison_document(
         notes,
         _grid(),
-        profiles=("balanced", "avoid_open", "legacy"),
     )
 
     assert document["reference_profile"] == "balanced"
@@ -49,6 +48,7 @@ def test_comparison_uses_final_fingering_timelines_for_every_profile() -> None:
     assert [strategy["profile"] for strategy in strategies] == [
         "balanced",
         "avoid_open",
+        "combined",
         "legacy",
     ]
     assert [
@@ -56,7 +56,8 @@ def test_comparison_uses_final_fingering_timelines_for_every_profile() -> None:
         for note in strategies[1]["notes"]
     ] == [(3, 5), (3, 4), (3, 2)]
     assert strategies[0]["metrics"]["repeated_phrase_inconsistencies"] == 0
-    assert strategies[2]["notes"][0]["fret"] == 0
+    assert strategies[2]["label"] == "Combined"
+    assert strategies[3]["notes"][0]["fret"] == 0
     assert document["playback_notes"] == [
         {"pitch": 38, "start_seconds": 0.0, "end_seconds": 0.125},
         {"pitch": 37, "start_seconds": 0.125, "end_seconds": 0.25},

@@ -36,6 +36,26 @@ def test_gp5_round_trips_five_string_tuning_and_notes(tmp_path: Path) -> None:
     assert [(note.string, note.value) for note in sounding] == [(5, 2), (4, 0)]
 
 
+def test_combined_strategy_exports_compact_upper_pair_and_preserves_pitches(tmp_path: Path) -> None:
+    output = tmp_path / "combined.gp5"
+    pitches = [29, 29, 41, 41, 46, 46, 34, 37, 39]
+    notes = [BassNote(p, i * 0.25, (i + 1) * 0.25, "electric_bass")
+             for i, p in enumerate(pitches)]
+    grid = RhythmGrid("test", 120.0, 4, 0.0, (0.0, 0.5, 1.0), 0.0)
+
+    write_gp5(output, notes, grid, title="Combined", fingering_profile="combined",
+              five_string=False)
+
+    song = guitarpro.parse(str(output))
+    sounding = [n for measure in song.tracks[0].measures for beat in measure.voices[0].beats
+                for n in beat.notes if n.type.name == "normal"]
+    assert [(n.string, n.value) for n in sounding[:6]] == [
+        (4, 1), (4, 1), (3, 8), (3, 8), (2, 8), (2, 8),
+    ]
+    tuning = {s.number: s.value for s in song.tracks[0].strings}
+    assert [tuning[n.string] + n.value for n in sounding] == pitches
+
+
 def test_gp5_replaces_metadata_characters_not_supported_by_legacy_encoding(
     tmp_path: Path,
 ) -> None:
